@@ -38,7 +38,7 @@ export function init(roomId, videoElement) {
             console.log("Track received:", event.track.kind);
             videoElement.srcObject = event.streams[0];
             
-            // [Autoplay Fix]
+            // [Autoplay Fix] Handle browser autoplay policies
             const playPromise = videoElement.play();
             if (playPromise !== undefined) {
                 playPromise.catch(error => {

@@ -31,12 +31,11 @@ export async function init(roomId, videoElement) {
     try {
         console.log("Initializing Universal Broadcaster...");
 
-        // 1. Request Media (Adaptive Constraints)
-        // We use 'ideal' so Android phones (which can't do 1080p) don't crash,
-        // while Windows laptops still get the best quality.
+        // 1. Request Media (Adaptive Constraints for Stability)
+        // We use 'ideal' to prevent crashes on non-standard screens (like phones or 59Hz laptops)
         const stream = await navigator.mediaDevices.getDisplayMedia({
             video: {
-                height: { ideal: 1080 }, // Aim for 1080p on PC
+                height: { ideal: 1080 }, // Aim for 1080p
                 frameRate: { ideal: 60 } // Aim for 60fps
             },
             audio: {
@@ -62,14 +61,14 @@ export async function init(roomId, videoElement) {
 
             // 2. Stream Optimization
             stream.getTracks().forEach(track => {
-                // 'motion' is critical for movies/games
+                // 'motion' is critical for movies/games to look smooth
                 if (track.kind === 'video' && 'contentHint' in track) {
                     track.contentHint = 'motion';
                 }
                 peerConnection.addTrack(track, stream);
             });
 
-            // 3. Hardware Acceleration (Intel Iris / Android Adreno)
+            // 3. Hardware Acceleration (Intel Iris Xe / Android Adreno)
             try {
                 const transceivers = peerConnection.getTransceivers();
                 for (const t of transceivers) {
@@ -137,7 +136,7 @@ export async function init(roomId, videoElement) {
 
 function enhanceSDP(sdp) {
     let newSdp = sdp;
-    // 6Mbps Video (Safe for WiFi)
+    // 6Mbps Video (Safe for WiFi, high quality 1080p)
     newSdp = newSdp.replace(/a=mid:video\r\n/g, 'a=mid:video\r\nb=AS:6000\r\n');
     // 256kbps Audio (High Quality)
     if (newSdp.indexOf("a=mid:audio") !== -1) {
