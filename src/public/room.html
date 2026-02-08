@@ -54,6 +54,16 @@
         <video id="mainVideo" playsinline autoplay class="w-full h-full object-contain"></video>
         
         <div id="controls" class="absolute bottom-10 flex gap-4 bg-slate-900/80 backdrop-blur-md border border-slate-700 rounded-2xl px-6 py-3 transition-all duration-500 ease-in-out opacity-100 translate-y-0 pointer-events-auto">
+            
+            <button id="micBtn" class="flex items-center gap-2 text-slate-200 hover:text-white font-bold transition-colors hidden">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path>
+                </svg>
+                <span id="micStatus">Muted</span>
+            </button>
+
+            <div class="w-px h-6 bg-slate-600 mx-2 hidden" id="controlSeparator"></div>
+
             <button id="fsBtn" class="flex items-center gap-2 text-slate-200 hover:text-white font-bold transition-colors">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"></path></svg>
                 Fullscreen
@@ -64,12 +74,10 @@
     <script type="module">
         import { toggleFullScreen } from './js/ui.js';
 
-        // Get URL Parameters
         const params = new URLSearchParams(window.location.search);
         const roomId = params.get('room');
         const role = params.get('role');
         
-        // Element References
         const roomDisplay = document.getElementById('roomDisplay');
         const video = document.getElementById('mainVideo');
         const curtain = document.getElementById('curtain');
@@ -78,28 +86,27 @@
         const wrapper = document.getElementById('video-wrapper');
         const uiLayer = document.getElementById('ui-layer');
         const controls = document.getElementById('controls');
+        
+        // Mic UI Elements
+        const micBtn = document.getElementById('micBtn');
+        const sep = document.getElementById('controlSeparator');
 
-        // --- Setup UI ---
         roomDisplay.innerText = roomId || "ERROR";
         
-        // Copy to Clipboard Logic
         document.getElementById('copyArea').onclick = () => {
             navigator.clipboard.writeText(roomId);
             const original = roomDisplay.style.color;
-            roomDisplay.style.color = "#4ade80"; // Flash Green
+            roomDisplay.style.color = "#4ade80"; 
             setTimeout(() => roomDisplay.style.color = original, 500);
         };
 
-        // Fullscreen Button Logic
         document.getElementById('fsBtn').onclick = (e) => {
             e.stopPropagation();
             toggleFullScreen(wrapper);
         };
 
-        // --- Auto-Hide UI Logic ---
         let fadeTimeout;
         const showUI = () => {
-            // Show elements
             uiLayer.style.opacity = '1'; 
             uiLayer.style.transform = 'translateY(0)';
             controls.style.opacity = '1'; 
@@ -107,8 +114,6 @@
             wrapper.style.cursor = 'default';
             
             clearTimeout(fadeTimeout);
-            
-            // Hide after 3.5 seconds of inactivity
             fadeTimeout = setTimeout(() => {
                 uiLayer.style.opacity = '0'; 
                 uiLayer.style.transform = 'translateY(-100%)'; 
@@ -118,48 +123,76 @@
             }, 3500);
         };
         
-        // Attach Listeners for Interaction
         document.body.addEventListener('mousemove', showUI);
         document.body.addEventListener('touchstart', showUI);
         document.body.addEventListener('click', showUI);
-        showUI(); // Show initially
+        showUI(); 
 
-        // --- Module Loading & Role Logic ---
-        curtain.classList.remove('hidden'); // Show curtain initially
+        curtain.classList.remove('hidden'); 
         
         if (role === 'host') {
             btnLabel.innerText = "PREPARING...";
-            
-            // Dynamic Import for Broadcaster
-            import('./js/broadcaster.js').then(module => {
-                btnLabel.innerText = "🚀 START BROADCAST";
-                
-                startBtn.onclick = async () => {
-                    try {
-                        btnLabel.innerText = "SELECT SCREEN...";
-                        await module.init(roomId, video);
-                        // Only hide curtain on success
-                        curtain.classList.add('hidden');
-                    } catch (e) {
-                        // User cancelled selection
-                        btnLabel.innerText = "🚀 START BROADCAST";
-                        console.error(e);
-                        alert("Broadcast cancelled.");
-                    }
-                };
-            });
+    
+            // Show Mic controls for Host
+            micBtn.classList.remove('hidden');
+            sep.classList.remove('hidden');
 
-        } else {
+            // Toggle Logic for Host
+            let isHostMuted = true;
+    
+            micBtn.onclick = async () => {
+            if (window.toggleHostMic) {
+                // 1. Calculate new state
+                const targetState = isHostMuted; // If currently muted, we want to unmute (true)
+            
+                // 2. ACTUAL FUNCTION CALL (This was missing)
+                const success = await window.toggleHostMic(targetState);
+            
+                // 3. Update UI only if successful
+                if (success) {
+                    isHostMuted = !isHostMuted;
+                    micStatus.innerText = isHostMuted ? "Muted" : "Active";
+                
+                    if (!isHostMuted) {
+                        micStatus.classList.add("text-red-500", "animate-pulse");
+                        micBtn.classList.add("text-white");
+                    } else {
+                        micStatus.classList.remove("text-red-500", "animate-pulse");
+                        micBtn.classList.remove("text-white");
+                    }
+                }
+            }
+        };
+
+        import('./js/broadcaster.js').then(module => {
+            btnLabel.innerText = "🚀 START BROADCAST";
+            startBtn.onclick = async () => {
+                try {
+                    btnLabel.innerText = "SELECT SCREEN...";
+                    await module.init(roomId, video);
+                    curtain.classList.add('hidden');
+                } catch (e) {
+                    btnLabel.innerText = "🚀 START BROADCAST";
+                    console.error(e);
+                    alert("Broadcast cancelled.");
+                }
+            };
+        });
+    }
+         
+         else {
             // Viewer Role
             btnLabel.innerText = "PREPARING...";
             
-            // Dynamic Import for Viewer
+            // Show Mic controls for Viewer
+            micBtn.classList.remove('hidden');
+            sep.classList.remove('hidden');
+
             import('./js/viewer.js').then(module => {
                 btnLabel.innerText = "▶ JOIN MOVIE";
-                
                 startBtn.onclick = () => {
                     curtain.classList.add('hidden');
-                    video.muted = false; // Unmute on explicit user interaction
+                    video.muted = false; 
                     module.init(roomId, video);
                 };
             });

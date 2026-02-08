@@ -7,49 +7,81 @@ const socket = io();
 // ==========================================
 const configuration = {
     iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' }, // Google STUN (Speed)
+        { urls: 'stun:stun.l.google.com:19302' }, 
         {
-            // CRITICAL: TCP Mode (Punches through Jio/Hostel firewalls)
             urls: 'turn:20.205.18.133:3478?transport=tcp',
             username: 'sharvari',
             credential: 'movie'
         },
         {
-            // UDP Mode (Best Quality for Movies)
             urls: 'turn:20.205.18.133:3478?transport=udp',
             username: 'sharvari',
             credential: 'movie'
         }
     ],
-    // aggressive ICE candidate gathering
     iceCandidatePoolSize: 2
 };
 
 let peerConnection;
 let wakeLock = null;
+let localAudioStream = null;
+let isMuted = true;
 
 export async function init(roomId, videoElement) {
     console.log("Initializing Universal Viewer...");
     
-    // [FEATURE] Keep Screen Awake (Prevent sleep during movie)
     requestWakeLock();
-
-    // [iOS Fix] Required for iPhone/iPad inline playback
     videoElement.playsInline = true;
 
-    // ==========================================
-    // 2. UI Handlers (Double Tap & Floating Button)
-    // ==========================================
-    
-    // A. Double Tap on the wrapper (better hit area)
+    // A. Double Tap Fullscreen
     if (videoElement.parentElement) {
         videoElement.parentElement.addEventListener("dblclick", () => {
             toggleFullScreen(videoElement.parentElement);
         });
     }
 
-    // B. Create Floating Button (Backup for iPad/Mobile)
+    // B. Floating Button
     createFloatingButton(videoElement);
+
+    // [NEW] C. Microphone Logic
+    const micBtn = document.getElementById('micBtn');
+    const micStatus = document.getElementById('micStatus');
+    
+    if (micBtn) {
+        micBtn.onclick = async () => {
+            if (isMuted) {
+                // --- Turn Mic ON ---
+                try {
+                    localAudioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    const audioTrack = localAudioStream.getAudioTracks()[0];
+                    
+                    if (peerConnection) {
+                        const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'audio');
+                        if (sender) {
+                            sender.replaceTrack(audioTrack);
+                        } else {
+                            peerConnection.addTrack(audioTrack, localAudioStream);
+                        }
+                    }
+
+                    micStatus.innerText = "Speaking";
+                    micStatus.classList.add("text-red-500", "animate-pulse");
+                    isMuted = false;
+                } catch (err) {
+                    console.error("Mic Error:", err);
+                    alert("Microphone access denied. Check browser permissions.");
+                }
+            } else {
+                // --- Turn Mic OFF ---
+                if (localAudioStream) {
+                    localAudioStream.getTracks().forEach(track => track.stop());
+                }
+                micStatus.innerText = "Muted";
+                micStatus.classList.remove("text-red-500", "animate-pulse");
+                isMuted = true;
+            }
+        };
+    }
 
     // ==========================================
     // 3. WebRTC Connection Logic
@@ -57,56 +89,32 @@ export async function init(roomId, videoElement) {
     socket.emit("join-room", roomId, "viewer");
 
     socket.on("offer", async (id, description) => {
-        // Close existing connection if any (prevents ghost streams)
         if (peerConnection) {
-            console.warn("Closing existing connection for new offer");
             peerConnection.close();
         }
         
         peerConnection = new RTCPeerConnection(configuration);
         
-        // [OPTIMIZATION] Explicitly ask for Receive-Only video/audio
-        // This helps Android/iOS negotiate the connection faster
+        // [CHANGE] Audio is now 'sendrecv' to allow talking back
+        peerConnection.addTransceiver('audio', { direction: 'sendrecv' });
         peerConnection.addTransceiver('video', { direction: 'recvonly' });
-        peerConnection.addTransceiver('audio', { direction: 'recvonly' });
 
-        // Handle Incoming Stream
         peerConnection.ontrack = event => {
-            console.log(`Track received: ${event.track.kind}`);
             videoElement.srcObject = event.streams[0];
-            
-            // [Autoplay Fix] Handle browser autoplay policies
-            const playPromise = videoElement.play();
-            if (playPromise !== undefined) {
-                playPromise.catch(error => {
-                    console.log("Autoplay blocked. Waiting for user interaction.", error);
-                    // Optional: You could show a "Click to Play" overlay here
-                });
-            }
+            videoElement.play().catch(e => console.log("Autoplay blocked:", e));
         };
 
-        // Handle ICE Candidates
         peerConnection.onicecandidate = event => {
             if (event.candidate) {
                 socket.emit("candidate", id, event.candidate);
             }
         };
         
-        // [Robustness] Connection State Monitoring
         peerConnection.oniceconnectionstatechange = () => {
             const state = peerConnection.iceConnectionState;
-            console.log(`ICE Connection State: ${state}`);
-            
-            if (state === 'disconnected') {
-                console.warn("Stream disconnected. Waiting for auto-recovery...");
-            }
-            if (state === 'failed') {
-                console.error("Connection failed. You may need to refresh.");
-                // We could trigger an automatic restartIce() here if needed
-            }
+            if (state === 'disconnected') console.warn("Stream disconnected...");
         };
 
-        // Apply Remote Description
         try {
             await peerConnection.setRemoteDescription(description);
             const answer = await peerConnection.createAnswer();
@@ -126,7 +134,6 @@ export async function init(roomId, videoElement) {
     });
 
     socket.on("broadcaster", () => {
-        console.log("Broadcaster joined. Requesting stream...");
         socket.emit("watcher"); 
     });
     
@@ -135,7 +142,6 @@ export async function init(roomId, videoElement) {
         window.location.href = "/";
     });
     
-    // Cleanup on exit
     window.onunload = window.onbeforeunload = () => {
         socket.close();
         if (peerConnection) peerConnection.close();
@@ -146,22 +152,17 @@ export async function init(roomId, videoElement) {
 // ==========================================
 // 4. Helper Functions
 // ==========================================
-
-// [FEATURE] Wake Lock API (Keeps screen on)
 async function requestWakeLock() {
     try {
         if ('wakeLock' in navigator) {
             wakeLock = await navigator.wakeLock.request('screen');
-            console.log('Screen Wake Lock active');
         }
     } catch (err) {
-        console.warn(`Wake Lock failed: ${err.name}, ${err.message}`);
+        console.warn(`Wake Lock failed: ${err.message}`);
     }
 }
 
-// [UI] Floating Button Generator
 function createFloatingButton(videoElement) {
-    // Prevent duplicate buttons
     if (document.getElementById('floatingFsBtn')) return;
 
     const btn = document.createElement("button");
@@ -170,7 +171,7 @@ function createFloatingButton(videoElement) {
     
     Object.assign(btn.style, {
         position: "fixed",
-        bottom: "80px", // Higher up to avoid iOS Home Bar
+        bottom: "80px",
         right: "20px",
         zIndex: "10000",
         padding: "12px 24px",
@@ -189,7 +190,6 @@ function createFloatingButton(videoElement) {
     btn.onclick = (e) => {
         e.preventDefault();
         e.stopPropagation();
-        // Use the robust UI helper from ui.js
         toggleFullScreen(videoElement.parentElement);
     };
     

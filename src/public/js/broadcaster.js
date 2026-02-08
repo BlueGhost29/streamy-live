@@ -3,18 +3,15 @@ const socket = io();
 // ==========================================
 // 1. CONFIGURATION: Azure Private Relay
 // ==========================================
-// IP: 20.205.18.133 (East Asia/Pune Route)
 const configuration = {
     iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' }, // Google STUN (Speed)
+        { urls: 'stun:stun.l.google.com:19302' },
         {
-            // CRITICAL: TCP Mode (Punches through Jio/Hostel firewalls)
             urls: 'turn:20.205.18.133:3478?transport=tcp',
             username: 'sharvari',
             credential: 'movie'
         },
         {
-            // UDP Mode (Best Quality for Movies)
             urls: 'turn:20.205.18.133:3478?transport=udp',
             username: 'sharvari',
             credential: 'movie'
@@ -24,61 +21,131 @@ const configuration = {
 };
 
 const peerConnections = {};
+let localStream = null; // We need this global to mix the Mic in later
 
 export async function init(roomId, videoElement) {
-    // [COMPATIBILITY CHECK] Detect iOS (iPad/iPhone)
-    // Apple strictly blocks 'getDisplayMedia' on mobile browsers.
+    // [COMPATIBILITY CHECK] Detect iOS
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
     if (isIOS) {
         alert("HOSTING ERROR: iOS devices cannot share screen due to Apple restrictions. Please use a Laptop or Android to host.");
-        window.location.href = "/"; // Send back to home
+        window.location.href = "/"; 
         return;
     }
 
     try {
         console.log("Initializing High-Fidelity Broadcaster...");
 
-        // 2. Request Media (Adaptive Constraints)
-        // We use 'ideal' to prevent crashes on non-standard screens
-        const stream = await navigator.mediaDevices.getDisplayMedia({
+        // 2. Request Media (Screen + System Audio)
+        localStream = await navigator.mediaDevices.getDisplayMedia({
             video: {
-                height: { ideal: 1080 }, // Aim for 1080p
-                frameRate: { ideal: 60 }, // Aim for 60fps
+                height: { ideal: 1080 },
+                frameRate: { ideal: 60 },
                 cursor: "always"
             },
             audio: {
-                autoGainControl: false,  // High fidelity audio (No compression)
-                echoCancellation: false, // Music/Game audio stays pure
+                autoGainControl: false,  
+                echoCancellation: false, // Critical for Movie Audio quality
                 noiseSuppression: false,
-                channelCount: 2          // Stereo
+                channelCount: 2          
             }
         });
 
-        console.log("Stream granted:", stream.id);
+        console.log("Stream granted:", localStream.id);
+        videoElement.srcObject = localStream;
+        videoElement.muted = true; // Local mute to prevent feedback
 
-        videoElement.srcObject = stream;
-        videoElement.muted = true; // Mute local preview to prevent feedback loop
-
-        // Join the room
+        // Join room
         socket.emit("join-room", roomId, "broadcaster");
         socket.emit("broadcaster", roomId);
 
-        // --- Socket Listeners ---
+        // ==========================================
+        // 3. HOST MICROPHONE LOGIC (The Missing Piece)
+        // ==========================================
+        // We expose this function so the UI Button can call it
+        // ==========================================
+        // 3. HOST MICROPHONE LOGIC
+        // ==========================================
+        window.toggleHostMic = async (shouldEnable) => {
+            if (shouldEnable) {
+                try {
+                    const micStream = await navigator.mediaDevices.getUserMedia({ 
+                        audio: { echoCancellation: true } 
+                    });
+                    const micTrack = micStream.getAudioTracks()[0];
+                    
+                    // [FIX] Add to localStream so NEW viewers get it automatically
+                    localStream.addTrack(micTrack);
+
+                    // Add to EXISTING viewers immediately
+                    for (const id in peerConnections) {
+                        const pc = peerConnections[id];
+                        // check if track is already added to avoid errors
+                        const senders = pc.getSenders();
+                        const alreadyHasAudio = senders.some(s => s.track && s.track.kind === 'audio' && s.track.id === micTrack.id);
+                        
+                        if (!alreadyHasAudio) {
+                            pc.addTrack(micTrack, localStream);
+                        }
+                    }
+                    console.log("Host Mic Activated");
+                    return true;
+                } catch (e) {
+                    console.error("Mic failed", e);
+                    alert("Could not access Microphone. Check permissions.");
+                    return false;
+                }
+            } else {
+                // Mute logic: For this version, we will just stop the track 
+                // to effectively mute it.
+                const audioTracks = localStream.getAudioTracks();
+                // Note: The first track is usually System Audio, second is Mic
+                if (audioTracks.length > 1) {
+                    audioTracks[1].stop(); // Stop the mic track
+                    localStream.removeTrack(audioTracks[1]); // Remove from stream
+                    console.log("Host Mic Muted");
+                }
+                return true; 
+            }
+        };
+
+        // ==========================================
+        // 4. SOCKET LISTENERS
+        // ==========================================
         socket.on("watcher", async (id) => {
             console.log("New watcher connecting:", id);
             const peerConnection = new RTCPeerConnection(configuration);
             peerConnections[id] = peerConnection;
 
-            // 3. Stream Optimization
-            stream.getTracks().forEach(track => {
-                // 'motion' is critical for movies/games to look smooth
+            // A. Send Movie (Video + System Audio)
+            localStream.getTracks().forEach(track => {
                 if (track.kind === 'video' && 'contentHint' in track) {
                     track.contentHint = 'motion';
                 }
-                peerConnection.addTrack(track, stream);
+                peerConnection.addTrack(track, localStream);
             });
 
-            // 4. Hardware Acceleration & Codec Selection (VP9 > VP8 > H264)
+            // B. Receive Viewer Audio
+            // We create a new audio element for every viewer
+            peerConnection.ontrack = (event) => {
+                console.log("Receiving audio from viewer:", id);
+                const audio = document.createElement('audio');
+                audio.srcObject = event.streams[0];
+                audio.autoplay = true;
+                audio.controls = false;
+                audio.id = `audio-${id}`; // ID for cleanup later
+                document.body.appendChild(audio);
+            };
+
+            // C. Enable Bi-directional Audio
+            // We force the transceiver to 'sendrecv' so we can hear them
+            const audioTransceiver = peerConnection.getTransceivers().find(t => t.sender.track && t.sender.track.kind === 'audio');
+            if (audioTransceiver) {
+                audioTransceiver.direction = 'sendrecv';
+            } else {
+                peerConnection.addTransceiver('audio', { direction: 'sendrecv' });
+            }
+
+            // D. Codec Preferences (Force VP9 for Quality)
             try {
                 const transceivers = peerConnection.getTransceivers();
                 for (const t of transceivers) {
@@ -86,7 +153,7 @@ export async function init(roomId, videoElement) {
                         const caps = RTCRtpSender.getCapabilities('video');
                         if (caps) {
                             const preferredCodecs = caps.codecs.filter(c => 
-                                c.mimeType === 'video/VP9' || c.mimeType === 'video/VP8'
+                                c.mimeType === 'video/VP9' 
                             );
                             if (preferredCodecs.length > 0) {
                                 t.setCodecPreferences(preferredCodecs);
@@ -98,22 +165,19 @@ export async function init(roomId, videoElement) {
                 console.warn("Codec preference failed, using default.", e);
             }
 
-            // 5. ICE Candidate Handling
+            // E. ICE Candidates
             peerConnection.onicecandidate = event => {
                 if (event.candidate) socket.emit("candidate", id, event.candidate);
             };
 
-            // 6. Robust Connection Monitoring
             peerConnection.oniceconnectionstatechange = () => {
                 const state = peerConnection.iceConnectionState;
-                console.log(`Peer ${id} connection state:`, state);
                 if (state === 'failed' || state === 'closed') {
-                    console.log(`Peer ${id} dropped. Cleaning up.`);
                     delete peerConnections[id];
                 }
             };
 
-            // 7. Create Offer with Bandwidth Boost
+            // F. Create Offer
             const offer = await peerConnection.createOffer();
             const enhancedSdp = enhanceSDP(offer.sdp);
             
@@ -133,35 +197,35 @@ export async function init(roomId, videoElement) {
             }
         });
 
+        // [CLEANUP] Remove Audio Element when Viewer leaves
         socket.on("disconnectPeer", id => {
             if (peerConnections[id]) {
                 peerConnections[id].close();
                 delete peerConnections[id];
+                
+                // Remove the invisible audio player for this user
+                const audioEl = document.getElementById(`audio-${id}`);
+                if (audioEl) audioEl.remove();
+                console.log(`Cleaned up connection for ${id}`);
             }
         });
 
-        // Handle User Stop Sharing via Browser UI
-        stream.getVideoTracks()[0].onended = () => {
+        localStream.getVideoTracks()[0].onended = () => {
             alert("Broadcast ended.");
             window.location.reload();
         };
 
     } catch (err) {
         console.error("Broadcaster Error:", err);
-        // If user cancelled selection, reload to reset UI
         if (err.name === 'NotAllowedError') window.location.reload();
         throw err;
     }
 }
 
-// Helper: Forces higher bitrates (6Mbps Video / 256kbps Audio)
+// Helper: Boost Bitrate for 1080p 60FPS
 function enhanceSDP(sdp) {
     let newSdp = sdp;
-    // Force 6Mbps Video (Safe for WiFi, high quality 1080p)
-    newSdp = newSdp.replace(/a=mid:video\r\n/g, 'a=mid:video\r\nb=AS:6000\r\n');
-    // Force 256kbps Audio (High Quality)
-    if (newSdp.indexOf("a=mid:audio") !== -1) {
-        newSdp = newSdp.replace(/a=mid:audio\r\n/g, 'a=mid:audio\r\nb=AS:256\r\n');
-    }
+    // 8.5 Mbps is the "sweet spot" for 1080p60 on Intel Xe
+    newSdp = newSdp.replace(/a=mid:video\r\n/g, 'a=mid:video\r\nb=AS:8500\r\n');
     return newSdp;
 }
