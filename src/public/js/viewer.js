@@ -1,3 +1,4 @@
+// viewer.js
 import { toggleFullScreen } from './ui.js';
 
 const socket = io();
@@ -26,12 +27,17 @@ let peerConnection;
 let wakeLock = null;
 let localAudioStream = null;
 let isMuted = true;
+let isHighQuality = true; // [NEW] Track state
 
 export async function init(roomId, videoElement) {
     console.log("Initializing Universal Viewer...");
     
     requestWakeLock();
+    
+    // [iOS Fix] Ensure these attributes are set for Safari
     videoElement.playsInline = true;
+    videoElement.autoplay = true; 
+    videoElement.controls = false;
 
     // A. Double Tap Fullscreen
     if (videoElement.parentElement) {
@@ -43,7 +49,31 @@ export async function init(roomId, videoElement) {
     // B. Floating Button
     createFloatingButton(videoElement);
 
-    // [NEW] C. Microphone Logic
+    // ==========================================
+    // NEW: QUALITY TOGGLE LOGIC
+    // ==========================================
+    const qualityBtn = document.getElementById('qualityBtn');
+    if (qualityBtn) {
+        qualityBtn.onclick = () => {
+            isHighQuality = !isHighQuality;
+            
+            // UI Update
+            if (isHighQuality) {
+                qualityBtn.innerText = "HD";
+                qualityBtn.classList.replace('text-yellow-500', 'text-green-500');
+            } else {
+                qualityBtn.innerText = "SD";
+                qualityBtn.classList.replace('text-green-500', 'text-yellow-500');
+            }
+
+            // Send Request
+            const mode = isHighQuality ? 'high' : 'low';
+            console.log("Requesting quality:", mode);
+            socket.emit("bitrate_request", roomId, mode);
+        };
+    }
+
+    // [C]. Microphone Logic (Enhanced)
     const micBtn = document.getElementById('micBtn');
     const micStatus = document.getElementById('micStatus');
     
@@ -52,7 +82,15 @@ export async function init(roomId, videoElement) {
             if (isMuted) {
                 // --- Turn Mic ON ---
                 try {
-                    localAudioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    // [FIX] Aggressive Echo Cancellation for Mobile
+                    localAudioStream = await navigator.mediaDevices.getUserMedia({ 
+                        audio: { 
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                            autoGainControl: true
+                        } 
+                    });
+                    
                     const audioTrack = localAudioStream.getAudioTracks()[0];
                     
                     if (peerConnection) {
@@ -60,6 +98,7 @@ export async function init(roomId, videoElement) {
                         if (sender) {
                             sender.replaceTrack(audioTrack);
                         } else {
+                            // If no audio sender exists yet, add it
                             peerConnection.addTrack(audioTrack, localAudioStream);
                         }
                     }
@@ -74,7 +113,7 @@ export async function init(roomId, videoElement) {
             } else {
                 // --- Turn Mic OFF ---
                 if (localAudioStream) {
-                    localAudioStream.getTracks().forEach(track => track.stop());
+                    localAudioStream.getTracks().forEach(track => track.stop()); // Completely stop hardware
                 }
                 micStatus.innerText = "Muted";
                 micStatus.classList.remove("text-red-500", "animate-pulse");
@@ -95,13 +134,14 @@ export async function init(roomId, videoElement) {
         
         peerConnection = new RTCPeerConnection(configuration);
         
-        // [CHANGE] Audio is now 'sendrecv' to allow talking back
+        // [CHANGE] Audio is 'sendrecv' so we can talk back
         peerConnection.addTransceiver('audio', { direction: 'sendrecv' });
         peerConnection.addTransceiver('video', { direction: 'recvonly' });
 
         peerConnection.ontrack = event => {
+            // [iOS Fix] Ensure we assign stream AND play
             videoElement.srcObject = event.streams[0];
-            videoElement.play().catch(e => console.log("Autoplay blocked:", e));
+            videoElement.play().catch(e => console.log("Autoplay blocked (waiting for interaction):", e));
         };
 
         peerConnection.onicecandidate = event => {

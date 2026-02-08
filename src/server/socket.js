@@ -6,7 +6,6 @@ module.exports = (io) => {
             socket.join(roomId);
             console.log(`User ${socket.id} joined room: ${roomId} as ${role}`);
             
-            // Trigger handshake: Tell broadcaster a new viewer is here
             if (role === 'viewer') {
                 socket.to(roomId).emit("watcher", socket.id);
             }
@@ -18,9 +17,7 @@ module.exports = (io) => {
         });
 
         // 3. Late Viewer / Reconnect Request
-        // If a viewer reloads, they ask "Is anyone broadcasting?"
         socket.on("watcher", () => {
-            // We broadcast to the room the socket is currently in
             const roomId = Array.from(socket.rooms).find(r => r !== socket.id);
             if (roomId) {
                 socket.to(roomId).emit("watcher", socket.id);
@@ -40,13 +37,34 @@ module.exports = (io) => {
             socket.to(id).emit("candidate", socket.id, message);
         });
 
-        // 5. Handle Disconnect
-        // Use 'disconnecting' to access rooms before the socket leaves
         socket.on("disconnecting", () => {
             const roomId = Array.from(socket.rooms).find(r => r !== socket.id);
             if (roomId) {
                 socket.to(roomId).emit("disconnectPeer", socket.id);
             }
+        });
+
+        // ===================================
+        // 5. Chat Feature
+        // ===================================
+        socket.on("chat-message", (roomId, payload) => {
+            io.to(roomId).emit("chat-message", payload);
+        });
+
+        // ===================================
+        // 6. Emoji Reactions
+        // ===================================
+        socket.on("reaction", (roomId, emoji) => {
+            io.to(roomId).emit("reaction", emoji);
+        });
+
+        // ===================================
+        // 7. NEW: Bitrate/Quality Toggle
+        // ===================================
+        socket.on("bitrate_request", (roomId, quality) => {
+            // Viewer (socket.id) wants 'high' or 'low'
+            // We tell the Broadcaster (everyone else in room) about this request
+            socket.to(roomId).emit("bitrate_request", socket.id, quality);
         });
     });
 };

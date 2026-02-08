@@ -14,26 +14,39 @@
     <link rel="apple-touch-icon" href="/assets/icons/icon.png">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+    <style>
+        @keyframes floatUp {
+            0% { transform: translateY(0) scale(0.5); opacity: 0; }
+            10% { opacity: 1; transform: translateY(-20px) scale(1.2); }
+            100% { transform: translateY(-300px) scale(1); opacity: 0; }
+        }
+        .emoji-bubble {
+            position: absolute;
+            bottom: 120px;
+            right: 30px;
+            font-size: 2.5rem;
+            pointer-events: none;
+            animation: floatUp 2s ease-out forwards;
+            z-index: 40;
+            text-shadow: 0 2px 10px rgba(0,0,0,0.5);
+        }
+    </style>
 </head>
 
 <body class="bg-black overflow-hidden select-none touch-manipulation">
 
     <div id="ui-layer" class="absolute top-6 left-0 w-full z-50 flex justify-center items-start transition-all duration-500 ease-in-out transform translate-y-0 opacity-100 pointer-events-none">
-        
         <div class="pointer-events-auto bg-slate-900/80 backdrop-blur-md border border-slate-700 rounded-full px-8 py-3 flex items-center gap-5 shadow-2xl cursor-pointer hover:bg-slate-800 hover:scale-105 transition-all group" id="copyArea">
-            
             <div class="flex items-center gap-2">
                 <span class="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
                 <span class="text-xs font-bold text-slate-400 uppercase tracking-widest">Live</span>
             </div>
-            
             <div class="h-8 w-[1px] bg-slate-700"></div>
-            
             <div class="flex flex-col items-center">
                 <span class="text-[10px] text-slate-500 font-bold uppercase leading-none mb-1">Room Code</span>
                 <span id="roomDisplay" class="font-mono text-2xl font-black text-white leading-none tracking-wider font-outline-2">...</span>
             </div>
-            
             <div class="text-slate-500 text-xs font-bold group-hover:text-blue-400 transition-colors pl-2">COPY</div>
         </div>
 
@@ -53,7 +66,7 @@
     <div id="video-wrapper" class="w-full h-full flex items-center justify-center bg-black relative">
         <video id="mainVideo" playsinline autoplay class="w-full h-full object-contain"></video>
         
-        <div id="controls" class="absolute bottom-10 flex gap-4 bg-slate-900/80 backdrop-blur-md border border-slate-700 rounded-2xl px-6 py-3 transition-all duration-500 ease-in-out opacity-100 translate-y-0 pointer-events-auto">
+        <div id="controls" class="absolute bottom-10 flex gap-4 bg-slate-900/80 backdrop-blur-md border border-slate-700 rounded-2xl px-6 py-3 transition-all duration-500 ease-in-out opacity-100 translate-y-0 pointer-events-auto z-30">
             
             <button id="micBtn" class="flex items-center gap-2 text-slate-200 hover:text-white font-bold transition-colors hidden">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -64,20 +77,59 @@
 
             <div class="w-px h-6 bg-slate-600 mx-2 hidden" id="controlSeparator"></div>
 
+            <button id="chatToggleBtn" class="flex items-center gap-2 text-slate-200 hover:text-white font-bold transition-colors relative">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path></svg>
+                Chat
+                <span id="chatBadge" class="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full hidden"></span>
+            </button>
+
+            <button id="qualityBtn" class="flex items-center gap-2 text-green-500 hover:text-white font-black font-mono transition-colors border border-slate-600 rounded px-2 hidden">
+                HD
+            </button>
+
+            <div class="w-px h-6 bg-slate-600 mx-2"></div>
+
             <button id="fsBtn" class="flex items-center gap-2 text-slate-200 hover:text-white font-bold transition-colors">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"></path></svg>
                 Fullscreen
             </button>
         </div>
+
+        <div id="reactionBar" class="absolute right-6 bottom-32 flex flex-col gap-3 z-30 transition-all duration-500 ease-in-out opacity-100 translate-x-0 pointer-events-auto">
+            <button class="text-3xl hover:scale-125 transition-transform drop-shadow-lg active:scale-90" onclick="sendReaction('❤️')">❤️</button>
+            <button class="text-3xl hover:scale-125 transition-transform drop-shadow-lg active:scale-90" onclick="sendReaction('😂')">😂</button>
+            <button class="text-3xl hover:scale-125 transition-transform drop-shadow-lg active:scale-90" onclick="sendReaction('😮')">😮</button>
+            <button class="text-3xl hover:scale-125 transition-transform drop-shadow-lg active:scale-90" onclick="sendReaction('🎉')">🎉</button>
+            <button class="text-3xl hover:scale-125 transition-transform drop-shadow-lg active:scale-90" onclick="sendReaction('👻')">👻</button>
+        </div>
+    </div>
+
+    <div id="chatPanel" class="fixed right-0 top-0 h-full w-80 bg-slate-900/95 backdrop-blur-xl border-l border-slate-700 transform translate-x-full transition-transform duration-300 z-50 flex flex-col pt-20 pb-6 px-4">
+        <div class="flex justify-between items-center mb-4 border-b border-slate-700 pb-2">
+            <h2 class="text-white font-bold text-lg">Live Chat</h2>
+            <button id="closeChatBtn" class="text-slate-400 hover:text-white">✕</button>
+        </div>
+        <div id="chatMessages" class="flex-1 overflow-y-auto space-y-3 mb-4 scrollbar-thin scrollbar-thumb-slate-700">
+            <div class="text-center text-slate-500 text-sm mt-4">Welcome to the room!</div>
+        </div>
+        <form id="chatForm" class="flex gap-2">
+            <input type="text" id="chatInput" placeholder="Say something..." autocomplete="off"
+                class="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500 text-sm">
+            <button type="submit" class="bg-blue-600 hover:bg-blue-500 text-white rounded-lg px-3 py-2 font-bold">➤</button>
+        </form>
     </div>
 
     <script type="module">
         import { toggleFullScreen } from './js/ui.js';
-
+        
+        // --- 1. SETUP ---
+        const socket = io(); 
         const params = new URLSearchParams(window.location.search);
         const roomId = params.get('room');
         const role = params.get('role');
+        const username = params.get('name') || (role === 'host' ? 'Host' : 'Viewer');
         
+        // --- 2. UI ELEMENTS ---
         const roomDisplay = document.getElementById('roomDisplay');
         const video = document.getElementById('mainVideo');
         const curtain = document.getElementById('curtain');
@@ -87,12 +139,27 @@
         const uiLayer = document.getElementById('ui-layer');
         const controls = document.getElementById('controls');
         
-        // Mic UI Elements
+        // New UI Elements
+        const reactionBar = document.getElementById('reactionBar');
+
+        // Chat UI
+        const chatPanel = document.getElementById('chatPanel');
+        const chatToggleBtn = document.getElementById('chatToggleBtn');
+        const closeChatBtn = document.getElementById('closeChatBtn');
+        const chatForm = document.getElementById('chatForm');
+        const chatInput = document.getElementById('chatInput');
+        const chatMessages = document.getElementById('chatMessages');
+        const chatBadge = document.getElementById('chatBadge');
+
+        // Mic UI
         const micBtn = document.getElementById('micBtn');
+        const micStatus = document.getElementById('micStatus');
         const sep = document.getElementById('controlSeparator');
+        const qualityBtn = document.getElementById('qualityBtn'); // NEW
 
         roomDisplay.innerText = roomId || "ERROR";
         
+        // --- 3. BASIC INTERACTIONS ---
         document.getElementById('copyArea').onclick = () => {
             navigator.clipboard.writeText(roomId);
             const original = roomDisplay.style.color;
@@ -105,21 +172,23 @@
             toggleFullScreen(wrapper);
         };
 
+        // UI Fade Logic (Updated to include Reaction Bar)
         let fadeTimeout;
         const showUI = () => {
-            uiLayer.style.opacity = '1'; 
-            uiLayer.style.transform = 'translateY(0)';
-            controls.style.opacity = '1'; 
-            controls.style.transform = 'translateY(0)';
+            uiLayer.style.opacity = '1'; uiLayer.style.transform = 'translateY(0)';
+            controls.style.opacity = '1'; controls.style.transform = 'translateY(0)';
+            reactionBar.style.opacity = '1'; reactionBar.style.transform = 'translateX(0)';
             wrapper.style.cursor = 'default';
             
             clearTimeout(fadeTimeout);
             fadeTimeout = setTimeout(() => {
-                uiLayer.style.opacity = '0'; 
-                uiLayer.style.transform = 'translateY(-100%)'; 
-                controls.style.opacity = '0'; 
-                controls.style.transform = 'translateY(100%)';
-                wrapper.style.cursor = 'none';
+                // Only hide if Chat is NOT open
+                if (chatPanel.classList.contains('translate-x-full')) {
+                    uiLayer.style.opacity = '0'; uiLayer.style.transform = 'translateY(-100%)'; 
+                    controls.style.opacity = '0'; controls.style.transform = 'translateY(100%)';
+                    reactionBar.style.opacity = '0'; reactionBar.style.transform = 'translateX(100%)';
+                    wrapper.style.cursor = 'none';
+                }
             }, 3500);
         };
         
@@ -129,64 +198,115 @@
         showUI(); 
 
         curtain.classList.remove('hidden'); 
-        
-        if (role === 'host') {
-            btnLabel.innerText = "PREPARING...";
-    
-            // Show Mic controls for Host
-            micBtn.classList.remove('hidden');
-            sep.classList.remove('hidden');
 
-            // Toggle Logic for Host
-            let isHostMuted = true;
-    
-            micBtn.onclick = async () => {
-            if (window.toggleHostMic) {
-                // 1. Calculate new state
-                const targetState = isHostMuted; // If currently muted, we want to unmute (true)
-            
-                // 2. ACTUAL FUNCTION CALL (This was missing)
-                const success = await window.toggleHostMic(targetState);
-            
-                // 3. Update UI only if successful
-                if (success) {
-                    isHostMuted = !isHostMuted;
-                    micStatus.innerText = isHostMuted ? "Muted" : "Active";
-                
-                    if (!isHostMuted) {
-                        micStatus.classList.add("text-red-500", "animate-pulse");
-                        micBtn.classList.add("text-white");
-                    } else {
-                        micStatus.classList.remove("text-red-500", "animate-pulse");
-                        micBtn.classList.remove("text-white");
-                    }
-                }
+        // --- 4. CHAT LOGIC ---
+        function toggleChat() {
+            chatPanel.classList.toggle('translate-x-full');
+            chatBadge.classList.add('hidden'); 
+        }
+
+        chatToggleBtn.onclick = (e) => { e.stopPropagation(); toggleChat(); };
+        closeChatBtn.onclick = () => chatPanel.classList.add('translate-x-full');
+
+        chatForm.onsubmit = (e) => {
+            e.preventDefault();
+            const text = chatInput.value.trim();
+            if (text) {
+                const payload = {
+                    user: username,
+                    text: text,
+                    time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                };
+                socket.emit('chat-message', roomId, payload);
+                chatInput.value = '';
             }
         };
 
-        import('./js/broadcaster.js').then(module => {
-            btnLabel.innerText = "🚀 START BROADCAST";
-            startBtn.onclick = async () => {
-                try {
-                    btnLabel.innerText = "SELECT SCREEN...";
-                    await module.init(roomId, video);
-                    curtain.classList.add('hidden');
-                } catch (e) {
-                    btnLabel.innerText = "🚀 START BROADCAST";
-                    console.error(e);
-                    alert("Broadcast cancelled.");
-                }
-            };
+        socket.on('chat-message', (msg) => {
+            const isMe = msg.user === username;
+            const div = document.createElement('div');
+            div.className = `flex flex-col ${isMe ? 'items-end' : 'items-start'} animate-fade-in`;
+            div.innerHTML = `
+                <div class="text-[10px] text-slate-400 mb-0.5 px-1">${msg.user} • ${msg.time}</div>
+                <div class="${isMe ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-200'} rounded-2xl px-3 py-2 max-w-[85%] text-sm break-words shadow-sm">
+                    ${msg.text}
+                </div>
+            `;
+            chatMessages.appendChild(div);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+
+            if (chatPanel.classList.contains('translate-x-full')) {
+                chatBadge.classList.remove('hidden');
+            }
         });
-    }
-         
-         else {
-            // Viewer Role
-            btnLabel.innerText = "PREPARING...";
+
+        // --- 5. REACTION LOGIC (NEW) ---
+        // Expose function to global scope for HTML onclick
+        window.sendReaction = (emoji) => {
+            socket.emit('reaction', roomId, emoji);
+        };
+
+        socket.on('reaction', (emoji) => {
+            const el = document.createElement('div');
+            el.innerText = emoji;
+            el.className = 'emoji-bubble';
             
-            // Show Mic controls for Viewer
+            // Randomize horizontal position slightly to make it look organic
+            const rightOffset = 30 + (Math.random() * 50 - 25); 
+            el.style.right = `${rightOffset}px`;
+            
+            document.body.appendChild(el);
+            
+            // Cleanup after animation finishes (2s)
+            setTimeout(() => el.remove(), 2000);
+        });
+
+        // --- 6. STREAM LOGIC ---
+        if (role === 'host') {
+            btnLabel.innerText = "PREPARING...";
             micBtn.classList.remove('hidden');
             sep.classList.remove('hidden');
+
+            let isHostMuted = true;
+            micBtn.onclick = async () => {
+                if (window.toggleHostMic) {
+                    const targetState = isHostMuted; 
+                    const success = await window.toggleHostMic(targetState);
+                    if (success) {
+                        isHostMuted = !isHostMuted;
+                        micStatus.innerText = isHostMuted ? "Muted" : "Active";
+                        if (!isHostMuted) {
+                            micStatus.classList.add("text-red-500", "animate-pulse");
+                            micBtn.classList.add("text-white");
+                        } else {
+                            micStatus.classList.remove("text-red-500", "animate-pulse");
+                            micBtn.classList.remove("text-white");
+                        }
+                    }
+                }
+            };
+
+            import('./js/broadcaster.js').then(module => {
+                btnLabel.innerText = "🚀 START BROADCAST";
+                startBtn.onclick = async () => {
+                    try {
+                        btnLabel.innerText = "SELECT SCREEN...";
+                        await module.init(roomId, video);
+                        curtain.classList.add('hidden');
+                    } catch (e) {
+                        btnLabel.innerText = "🚀 START BROADCAST";
+                        console.error(e);
+                        alert("Broadcast cancelled.");
+                    }
+                };
+            });
+        } 
+        else {
+            // Viewer Role
+            btnLabel.innerText = "PREPARING...";
+            micBtn.classList.remove('hidden');
+            sep.classList.remove('hidden');
+            qualityBtn.classList.remove('hidden'); // Show Quality Button for Viewers
 
             import('./js/viewer.js').then(module => {
                 btnLabel.innerText = "▶ JOIN MOVIE";

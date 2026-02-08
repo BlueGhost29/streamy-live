@@ -1,3 +1,4 @@
+// broadcaster.js
 const socket = io();
 
 // ==========================================
@@ -21,7 +22,9 @@ const configuration = {
 };
 
 const peerConnections = {};
-let localStream = null; // We need this global to mix the Mic in later
+let localStream = null; 
+let micStream = null; // Keep track of mic separately
+let audioContext = null; // [NEW] For robust audio routing
 
 export async function init(roomId, videoElement) {
     // [COMPATIBILITY CHECK] Detect iOS
@@ -35,7 +38,12 @@ export async function init(roomId, videoElement) {
     try {
         console.log("Initializing High-Fidelity Broadcaster...");
 
+        // [NEW] Initialize Audio Context on User Gesture (Click)
+        // This fixes the "Viewer Audio Not Heard" issue on Android/iOS
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
         // 2. Request Media (Screen + System Audio)
+        // Note: echoCancellation MUST be false for the movie audio to sound good
         localStream = await navigator.mediaDevices.getDisplayMedia({
             video: {
                 height: { ideal: 1080 },
@@ -44,7 +52,7 @@ export async function init(roomId, videoElement) {
             },
             audio: {
                 autoGainControl: false,  
-                echoCancellation: false, // Critical for Movie Audio quality
+                echoCancellation: false, 
                 noiseSuppression: false,
                 channelCount: 2          
             }
@@ -59,52 +67,65 @@ export async function init(roomId, videoElement) {
         socket.emit("broadcaster", roomId);
 
         // ==========================================
-        // 3. HOST MICROPHONE LOGIC (The Missing Piece)
-        // ==========================================
-        // We expose this function so the UI Button can call it
-        // ==========================================
-        // 3. HOST MICROPHONE LOGIC
+        // 3. HOST MICROPHONE LOGIC (Improved)
         // ==========================================
         window.toggleHostMic = async (shouldEnable) => {
-            if (shouldEnable) {
-                try {
-                    const micStream = await navigator.mediaDevices.getUserMedia({ 
-                        audio: { echoCancellation: true } 
+            try {
+                if (shouldEnable) {
+                    // A. Capture Mic with Voice constraints
+                    micStream = await navigator.mediaDevices.getUserMedia({ 
+                        audio: { 
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                            autoGainControl: true
+                        } 
                     });
+                    
                     const micTrack = micStream.getAudioTracks()[0];
                     
-                    // [FIX] Add to localStream so NEW viewers get it automatically
+                    // B. Add track to the local stream object (for future connections)
                     localStream.addTrack(micTrack);
 
-                    // Add to EXISTING viewers immediately
+                    // C. Add track to EXISTING connections
                     for (const id in peerConnections) {
                         const pc = peerConnections[id];
-                        // check if track is already added to avoid errors
                         const senders = pc.getSenders();
-                        const alreadyHasAudio = senders.some(s => s.track && s.track.kind === 'audio' && s.track.id === micTrack.id);
+                        // Check if we already sent an audio track (system audio is audio, mic is audio)
+                        const alreadyHasMic = senders.some(s => s.track && s.track.id === micTrack.id);
                         
-                        if (!alreadyHasAudio) {
+                        if (!alreadyHasMic) {
                             pc.addTrack(micTrack, localStream);
                         }
                     }
                     console.log("Host Mic Activated");
                     return true;
-                } catch (e) {
-                    console.error("Mic failed", e);
-                    alert("Could not access Microphone. Check permissions.");
-                    return false;
-                }
-            } else {
-                // Mute logic: For this version, we will just stop the track 
-                // to effectively mute it.
-                const audioTracks = localStream.getAudioTracks();
-                // Note: The first track is usually System Audio, second is Mic
-                if (audioTracks.length > 1) {
-                    audioTracks[1].stop(); // Stop the mic track
-                    localStream.removeTrack(audioTracks[1]); // Remove from stream
+
+                } else {
+                    // Mute Logic
+                    if (micStream) {
+                        micStream.getTracks().forEach(track => {
+                            track.stop(); // Stop hardware
+                            localStream.removeTrack(track); // Remove from stream object
+                            
+                            // Remove from active PeerConnections
+                            for (const id in peerConnections) {
+                                const pc = peerConnections[id];
+                                const senders = pc.getSenders();
+                                const senderToRemove = senders.find(s => s.track && s.track.id === track.id);
+                                if (senderToRemove) {
+                                    pc.removeTrack(senderToRemove);
+                                }
+                            }
+                        });
+                        micStream = null;
+                    }
                     console.log("Host Mic Muted");
+                    return true; 
                 }
-                return true; 
+            } catch (e) {
+                console.error("Mic toggle failed", e);
+                alert("Could not access Microphone. Check permissions.");
+                return false;
             }
         };
 
@@ -117,6 +138,7 @@ export async function init(roomId, videoElement) {
             peerConnections[id] = peerConnection;
 
             // A. Send Movie (Video + System Audio)
+            // If Mic is active, it's also in localStream, so this adds both.
             localStream.getTracks().forEach(track => {
                 if (track.kind === 'video' && 'contentHint' in track) {
                     track.contentHint = 'motion';
@@ -124,20 +146,22 @@ export async function init(roomId, videoElement) {
                 peerConnection.addTrack(track, localStream);
             });
 
-            // B. Receive Viewer Audio
-            // We create a new audio element for every viewer
+            // B. Receive Viewer Audio (The Fix)
+            // We use AudioContext instead of <audio> tag for reliable playback
             peerConnection.ontrack = (event) => {
                 console.log("Receiving audio from viewer:", id);
-                const audio = document.createElement('audio');
-                audio.srcObject = event.streams[0];
-                audio.autoplay = true;
-                audio.controls = false;
-                audio.id = `audio-${id}`; // ID for cleanup later
-                document.body.appendChild(audio);
+                if (event.streams && event.streams[0]) {
+                    const incomingStream = event.streams[0];
+                    
+                    // Create a source node from the stream
+                    const source = audioContext.createMediaStreamSource(incomingStream);
+                    
+                    // Connect to destination (Speakers)
+                    source.connect(audioContext.destination);
+                }
             };
 
             // C. Enable Bi-directional Audio
-            // We force the transceiver to 'sendrecv' so we can hear them
             const audioTransceiver = peerConnection.getTransceivers().find(t => t.sender.track && t.sender.track.kind === 'audio');
             if (audioTransceiver) {
                 audioTransceiver.direction = 'sendrecv';
@@ -197,16 +221,40 @@ export async function init(roomId, videoElement) {
             }
         });
 
-        // [CLEANUP] Remove Audio Element when Viewer leaves
         socket.on("disconnectPeer", id => {
             if (peerConnections[id]) {
                 peerConnections[id].close();
                 delete peerConnections[id];
-                
-                // Remove the invisible audio player for this user
-                const audioEl = document.getElementById(`audio-${id}`);
-                if (audioEl) audioEl.remove();
                 console.log(`Cleaned up connection for ${id}`);
+            }
+        });
+
+        // ==========================================
+        // 5. NEW: BITRATE CONTROLLER
+        // ==========================================
+        socket.on("bitrate_request", async (viewerId, quality) => {
+            const pc = peerConnections[viewerId];
+            if (!pc) return;
+
+            console.log(`Adjusting bitrate for ${viewerId} to ${quality}`);
+            
+            const videoSender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+            if (!videoSender) return;
+
+            const params = videoSender.getParameters();
+            if (!params.encodings) params.encodings = [{}];
+
+            // HD = 8.5 Mbps (Default), SD = 1.0 Mbps (Saver Mode)
+            if (quality === 'low') {
+                params.encodings[0].maxBitrate = 1000000; // 1 Mbps
+            } else {
+                params.encodings[0].maxBitrate = 8500000; // 8.5 Mbps
+            }
+
+            try {
+                await videoSender.setParameters(params);
+            } catch (err) {
+                console.error("Failed to set bitrate:", err);
             }
         });
 
@@ -225,7 +273,7 @@ export async function init(roomId, videoElement) {
 // Helper: Boost Bitrate for 1080p 60FPS
 function enhanceSDP(sdp) {
     let newSdp = sdp;
-    // 8.5 Mbps is the "sweet spot" for 1080p60 on Intel Xe
+    // 8.5 Mbps is the "sweet spot" for 1080p60
     newSdp = newSdp.replace(/a=mid:video\r\n/g, 'a=mid:video\r\nb=AS:8500\r\n');
     return newSdp;
 }
