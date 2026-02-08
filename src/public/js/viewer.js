@@ -1,23 +1,27 @@
 const socket = io();
 
-// 1. Define the STUN servers
+// 1. CONFIGURATION: Must match Broadcaster exactly
 const configuration = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' }
+    {
+      urls: [
+        "turn:openrelay.metered.ca:80",
+        "turn:openrelay.metered.ca:443",
+        "turn:openrelay.metered.ca:443?transport=tcp"
+      ],
+      username: "openrelayproject",
+      credential: "openrelayproject"
+    }
   ]
 };
 
-// 2. Use 'let' because we re-create this when the broadcaster calls
 let peerConnection; 
 
 export function init(roomId, videoElement) {
-    // Join Room
     socket.emit("join-room", roomId, "viewer");
 
-    // Listen for Offer from Broadcaster
     socket.on("offer", (id, description) => {
-        // FIX: Use 'configuration' here
         peerConnection = new RTCPeerConnection(configuration);
         
         peerConnection.ontrack = event => {
@@ -42,7 +46,7 @@ export function init(roomId, videoElement) {
     });
 
     socket.on("broadcaster", () => {
-        socket.emit("watcher"); // Re-handshake if broadcaster refreshes
+        socket.emit("watcher"); 
     });
     
     // Clean exit

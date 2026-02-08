@@ -1,29 +1,36 @@
 const socket = io();
 
-// 1. Define the STUN servers once
+// 1. CONFIGURATION: Google STUN (Speed) + OpenRelay TURN (Reliability)
 const configuration = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' }
+    {
+      urls: [
+        "turn:openrelay.metered.ca:80",
+        "turn:openrelay.metered.ca:443",
+        "turn:openrelay.metered.ca:443?transport=tcp"
+      ],
+      username: "openrelayproject",
+      credential: "openrelayproject"
+    }
   ]
 };
 
-// 2. State object to track multiple viewers (e.g. your friend + you testing)
 const peerConnections = {}; 
 
 export async function init(roomId, videoElement) {
     socket.emit("join-room", roomId, "broadcaster");
 
     try {
-        // Capture at Native Screen Resolution (No Downscaling)
+        // ACTION MODE: Lock to 1080p @ 60FPS for maximum smoothness
         const stream = await navigator.mediaDevices.getDisplayMedia({ 
             video: { 
-                width: { ideal: 1920 }, // Ask for 4K
-                height: { ideal: 1080 },
+                width: { ideal: 1920, max: 1920 },
+                height: { ideal: 1080, max: 1080 },
                 frameRate: { ideal: 60, min: 60 }
             }, 
             audio: {
-                autoGainControl: false,
+                autoGainControl: false, // Pure audio (no filtering)
                 echoCancellation: false,
                 noiseSuppression: false,
                 channelCount: 2
@@ -31,34 +38,34 @@ export async function init(roomId, videoElement) {
         });
         
         videoElement.srcObject = stream;
-        videoElement.muted = true; // Mute local preview to prevent feedback
+        videoElement.muted = true; // Mute local preview
         socket.emit("broadcaster", roomId);
     } catch (err) {
         console.error("Error: " + err);
     }
 
-    // When a viewer (watcher) joins
     socket.on("watcher", (id) => {
-        // FIX: Use 'configuration' (matching the const above)
         const peerConnection = new RTCPeerConnection(configuration);
         peerConnections[id] = peerConnection;
 
         const stream = videoElement.srcObject;
-        stream.getVideoTracks().forEach(track => {
-            // This is the magic "Action Mode" setting
-            if (track.contentHint) {
-            track.contentHint = "motion"; 
+
+        // CRITICAL FIX: The "Action Mode" Loop
+        // This prioritizes motion over sharpness to prevent stuttering
+        stream.getTracks().forEach(track => {
+            if (track.kind === 'video' && 'contentHint' in track) {
+                track.contentHint = 'motion'; 
             }
             peerConnection.addTrack(track, stream);
-        }); 
-        
+        });
+
         peerConnection.onicecandidate = event => {
             if (event.candidate) socket.emit("candidate", id, event.candidate);
         };
 
         peerConnection.createOffer()
             .then(sdp => {
-                // THE QUALITY HACK: Force High Bitrate
+                // Force 5000kbps bitrate (Best balance for 1080p action)
                 sdp.sdp = setBandwidth(sdp.sdp);
                 return peerConnection.setLocalDescription(sdp);
             })
@@ -85,8 +92,6 @@ export async function init(roomId, videoElement) {
     });
 }
 
-// Helper: Rewrites the SDP "handshake" text to demand 6Mbps speed
 function setBandwidth(sdp) {
-    // Force 6000kbps (6Mbps) for video to remove browser limits
     return sdp.replace(/a=mid:video\r\n/g, 'a=mid:video\r\nb=AS:5000\r\n');
 }
