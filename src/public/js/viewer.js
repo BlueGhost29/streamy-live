@@ -1,14 +1,24 @@
 const socket = io();
-let peerConnection;
-const config = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+
+// 1. Define the STUN servers
+const configuration = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' }
+  ]
+};
+
+// 2. Use 'let' because we re-create this when the broadcaster calls
+let peerConnection; 
 
 export function init(roomId, videoElement) {
-    // 1. Join Room
+    // Join Room
     socket.emit("join-room", roomId, "viewer");
 
-    // 2. Listen for Offer
+    // Listen for Offer from Broadcaster
     socket.on("offer", (id, description) => {
-        peerConnection = new RTCPeerConnection(config);
+        // FIX: Use 'configuration' here
+        peerConnection = new RTCPeerConnection(configuration);
         
         peerConnection.ontrack = event => {
             videoElement.srcObject = event.streams[0];
@@ -25,12 +35,14 @@ export function init(roomId, videoElement) {
     });
 
     socket.on("candidate", (id, candidate) => {
-        peerConnection.addIceCandidate(new RTCIceCandidate(candidate))
-            .catch(e => console.error(e));
+        if (peerConnection) {
+            peerConnection.addIceCandidate(new RTCIceCandidate(candidate))
+                .catch(e => console.error(e));
+        }
     });
 
     socket.on("broadcaster", () => {
-        socket.emit("watcher"); // Re-handshake
+        socket.emit("watcher"); // Re-handshake if broadcaster refreshes
     });
     
     // Clean exit
