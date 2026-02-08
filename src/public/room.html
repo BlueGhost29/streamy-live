@@ -16,42 +16,35 @@
 <body class="bg-black overflow-hidden select-none">
 
     <div id="ui-layer" class="absolute top-6 left-0 w-full z-50 flex justify-center items-start transition-all duration-500 ease-in-out transform translate-y-0 opacity-100">
-        
         <div class="pointer-events-auto bg-slate-900/80 backdrop-blur-md border border-slate-700 rounded-full px-8 py-3 flex items-center gap-5 shadow-2xl cursor-pointer hover:bg-slate-800 hover:scale-105 transition-all group" id="copyArea">
             <div class="flex items-center gap-2">
                 <span class="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
                 <span class="text-xs font-bold text-slate-400 uppercase tracking-widest">Live</span>
             </div>
-            
             <div class="h-8 w-[1px] bg-slate-700"></div>
-
             <div class="flex flex-col items-center">
                 <span class="text-[10px] text-slate-500 font-bold uppercase leading-none mb-1">Room Code</span>
                 <span id="roomDisplay" class="font-mono text-2xl font-black text-white leading-none tracking-wider font-outline-2">...</span>
             </div>
-            
-            <div class="text-slate-500 text-xs font-bold group-hover:text-blue-400 transition-colors">
-                CLICK TO COPY
-            </div>
+            <div class="text-slate-500 text-xs font-bold group-hover:text-blue-400 transition-colors">CLICK TO COPY</div>
         </div>
-
-        <a href="/" class="absolute right-6 pointer-events-auto bg-red-600/20 hover:bg-red-600 text-red-500 hover:text-white px-4 py-2 rounded-lg font-bold backdrop-blur transition-all">
-            Exit
-        </a>
+        <a href="/" class="absolute right-6 pointer-events-auto bg-red-600/20 hover:bg-red-600 text-red-500 hover:text-white px-4 py-2 rounded-lg font-bold backdrop-blur transition-all">Exit</a>
     </div>
 
     <div id="curtain" class="fixed inset-0 z-40 bg-slate-950 flex items-center justify-center hidden">
-        <button id="startViewerBtn" class="group relative px-12 py-6 bg-white text-black rounded-full font-black text-2xl shadow-[0_0_50px_rgba(255,255,255,0.3)] hover:scale-110 transition-transform overflow-hidden">
+        <button id="startViewerBtn" class="group relative px-12 py-6 bg-white text-black rounded-full font-black text-2xl shadow-[0_0_50px_rgba(255,255,255,0.3)] hover:scale-110 transition-transform overflow-hidden disabled:opacity-50 disabled:cursor-wait">
             <span id="btnText" class="relative z-10 flex items-center gap-3">
-                <svg class="w-8 h-8" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-                JOIN STREAM
+                <svg id="loadingIcon" class="animate-spin -ml-1 mr-3 h-5 w-5 text-black hidden" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span id="btnLabel">LOADING...</span>
             </span>
         </button>
     </div>
 
     <div id="video-wrapper" class="w-full h-full flex items-center justify-center bg-black">
         <video id="mainVideo" playsinline autoplay class="w-full h-full object-contain"></video>
-        
         <div id="controls" class="absolute bottom-10 flex gap-4 bg-slate-900/80 backdrop-blur-md border border-slate-700 rounded-2xl px-6 py-3 transition-all duration-500 ease-in-out opacity-100 translate-y-0 hover:opacity-100">
             <button id="fsBtn" class="flex items-center gap-2 text-slate-200 hover:text-white font-bold transition-colors">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"></path></svg>
@@ -66,80 +59,74 @@
         const params = new URLSearchParams(window.location.search);
         const roomId = params.get('room');
         const role = params.get('role');
-        const roomDisplay = document.getElementById('roomDisplay');
-
-        // --- 1. COPY CODE ONLY ---
-        roomDisplay.innerText = roomId || "ERROR";
         
+        // UI Setup
+        const roomDisplay = document.getElementById('roomDisplay');
+        roomDisplay.innerText = roomId || "ERROR";
         document.getElementById('copyArea').onclick = () => {
-            navigator.clipboard.writeText(roomId).then(() => {
-                const originalText = roomDisplay.innerText;
-                roomDisplay.innerText = "COPIED";
-                roomDisplay.classList.add("text-green-400");
-                setTimeout(() => {
-                    roomDisplay.innerText = originalText;
-                    roomDisplay.classList.remove("text-green-400");
-                }, 1000);
-            });
+            navigator.clipboard.writeText(roomId);
+            roomDisplay.classList.add("text-green-400");
+            setTimeout(() => roomDisplay.classList.remove("text-green-400"), 500);
         };
 
         const video = document.getElementById('mainVideo');
+        const curtain = document.getElementById('curtain');
+        const startBtn = document.getElementById('startViewerBtn');
+        const btnLabel = document.getElementById('btnLabel');
         const wrapper = document.getElementById('video-wrapper');
-        const controls = document.getElementById('controls');
-        const uiLayer = document.getElementById('ui-layer');
-
+        
         document.getElementById('fsBtn').onclick = () => toggleFullScreen(wrapper);
 
-        // --- 2. CINEMA MODE (Auto Hide) ---
+        // UI Auto-Hide Logic
         let fadeTimeout;
+        const uiLayer = document.getElementById('ui-layer');
+        const controls = document.getElementById('controls');
         const showUI = () => {
-            uiLayer.style.opacity = '1';
-            uiLayer.style.transform = 'translateY(0)';
-            controls.style.opacity = '1';
-            controls.style.transform = 'translateY(0)';
+            uiLayer.style.opacity = '1'; uiLayer.style.transform = 'translateY(0)';
+            controls.style.opacity = '1'; controls.style.transform = 'translateY(0)';
             wrapper.style.cursor = 'default';
-            
             clearTimeout(fadeTimeout);
             fadeTimeout = setTimeout(() => {
-                uiLayer.style.opacity = '0';
-                uiLayer.style.transform = 'translateY(-100%)'; 
-                controls.style.opacity = '0';
-                controls.style.transform = 'translateY(100%)';
+                uiLayer.style.opacity = '0'; uiLayer.style.transform = 'translateY(-100%)'; 
+                controls.style.opacity = '0'; controls.style.transform = 'translateY(100%)';
                 wrapper.style.cursor = 'none';
             }, 2500);
         };
-
         document.body.addEventListener('mousemove', showUI);
         document.body.addEventListener('touchstart', showUI);
         showUI();
 
-        // --- 3. ROLE HANDLING (FIXED FOR BROWSER SECURITY) ---
-        const curtain = document.getElementById('curtain');
-        const startBtn = document.getElementById('startViewerBtn');
-        const btnText = document.getElementById('btnText');
-
+        // --- CRITICAL FIX: PRE-LOAD THE MODULE ---
+        curtain.classList.remove('hidden');
+        
         if (role === 'host') {
-            // FIX: Show button for Host too, so they can CLICK to trigger screen share
-            curtain.classList.remove('hidden');
-            btnText.innerHTML = `
-                <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
-                START BROADCAST
-            `;
+            btnLabel.innerText = "PREPARING...";
             
-            startBtn.onclick = () => {
-                curtain.classList.add('hidden');
-                // Now called inside a click event -> Browser allows Screen Share!
-                import('./js/broadcaster.js').then(module => module.init(roomId, video));
-            };
+            // 1. Import the file NOW (Before the click)
+            import('./js/broadcaster.js').then(module => {
+                // 2. Once loaded, enable the button
+                btnLabel.innerText = "🚀 START BROADCAST";
+                
+                startBtn.onclick = () => {
+                    curtain.classList.add('hidden');
+                    // 3. This runs INSTANTLY now, so browser allows the popup!
+                    module.init(roomId, video);
+                };
+            });
 
         } else {
-            // Viewer Logic
-            curtain.classList.remove('hidden');
-            startBtn.onclick = () => {
-                curtain.classList.add('hidden');
-                video.muted = false;
-                import('./js/viewer.js').then(module => module.init(roomId, video));
-            };
+            btnLabel.innerText = "PREPARING...";
+            
+            // Same fix for viewer (pre-load viewer.js)
+            import('./js/viewer.js').then(module => {
+                btnLabel.innerText = "JOIN STREAM";
+                
+                startBtn.onclick = () => {
+                    curtain.classList.add('hidden');
+                    video.muted = false;
+                    module.init(roomId, video);
+                };
+            });
         }
     </script>
 </body>
