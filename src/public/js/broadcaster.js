@@ -18,9 +18,9 @@ export async function init(roomId, videoElement) {
         // Capture at Native Screen Resolution (No Downscaling)
         const stream = await navigator.mediaDevices.getDisplayMedia({ 
             video: { 
-                width: { ideal: 3840 }, // Ask for 4K
-                height: { ideal: 2160 },
-                frameRate: { ideal: 60 }
+                width: { ideal: 1920 }, // Ask for 4K
+                height: { ideal: 1080 },
+                frameRate: { ideal: 60, min: 60 }
             }, 
             audio: {
                 autoGainControl: false,
@@ -44,10 +44,14 @@ export async function init(roomId, videoElement) {
         peerConnections[id] = peerConnection;
 
         const stream = videoElement.srcObject;
+        stream.getVideoTracks().forEach(track => {
+            // This is the magic "Action Mode" setting
+            if (track.contentHint) {
+            track.contentHint = "motion"; 
+            }
+            peerConnection.addTrack(track, stream);
+        }); 
         
-        // Add tracks to connection
-        stream.getTracks().forEach(track => peerConnection.addTrack(track, stream));
-
         peerConnection.onicecandidate = event => {
             if (event.candidate) socket.emit("candidate", id, event.candidate);
         };
@@ -84,5 +88,5 @@ export async function init(roomId, videoElement) {
 // Helper: Rewrites the SDP "handshake" text to demand 6Mbps speed
 function setBandwidth(sdp) {
     // Force 6000kbps (6Mbps) for video to remove browser limits
-    return sdp.replace(/a=mid:video\r\n/g, 'a=mid:video\r\nb=AS:6000\r\n');
+    return sdp.replace(/a=mid:video\r\n/g, 'a=mid:video\r\nb=AS:5000\r\n');
 }
