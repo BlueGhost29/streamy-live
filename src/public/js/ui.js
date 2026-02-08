@@ -1,16 +1,31 @@
-// Handles Fullscreen logic for different browsers (iPad vs PC)
-export function toggleFullScreen(element) {
+// Handles Fullscreen logic for ALL platforms (Android, PC, iOS)
+export function toggleFullScreen(wrapper) {
+    // 1. Check if we are already in fullscreen
     if (!document.fullscreenElement && !document.webkitFullscreenElement) {
-        if (element.requestFullscreen) {
-            element.requestFullscreen();
-        } else if (element.webkitEnterFullscreen) {
-            // iOS Safari video specific
-            element.webkitEnterFullscreen();
-        } else if (element.webkitRequestFullscreen) {
-            // Older Safari
-            element.webkitRequestFullscreen();
+        
+        // A. Standard Fullscreen (Android, Windows, Mac Chrome)
+        // This makes the whole DIV fullscreen, keeping your custom UI visible.
+        if (wrapper.requestFullscreen) {
+            wrapper.requestFullscreen().catch(err => {
+                console.warn("Fullscreen request denied:", err);
+            });
+        } 
+        // B. Older WebKit Browsers
+        else if (wrapper.webkitRequestFullscreen) {
+            wrapper.webkitRequestFullscreen();
+        } 
+        // C. iOS / iPad Fallback (The Critical Fix)
+        // iOS does NOT support fullscreening a <div>. 
+        // We must find the <video> tag inside and trigger its native player.
+        else {
+            const video = wrapper.querySelector('video');
+            if (video && video.webkitEnterFullscreen) {
+                video.webkitEnterFullscreen(); // Enters iOS Native Player
+            }
         }
-    } else {
+    } 
+    // 2. Exit Fullscreen Logic
+    else {
         if (document.exitFullscreen) {
             document.exitFullscreen();
         } else if (document.webkitExitFullscreen) {

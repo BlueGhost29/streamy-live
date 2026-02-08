@@ -16,30 +16,41 @@ const configuration = {
     ]
 };
 
-const peerConnections = {}; 
+const peerConnections = {};
 
 export async function init(roomId, videoElement) {
-    try {
-        console.log("Requesting Intel Iris Xe Optimized Stream...");
+    // [COMPATIBILITY CHECK] Detect iOS (iPad/iPhone)
+    // Apple strictly blocks 'getDisplayMedia' on mobile browsers.
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+    if (isIOS) {
+        alert("Apple blocks Screen Sharing on iOS browsers. You can VIEW streams on this device, but to HOST, please use a PC, Mac, or Android.");
+        window.location.href = "/"; // Send back to home
+        return;
+    }
 
-        // [CRITICAL FIX] Removed 'sampleRate' and 'sampleSize' to prevent OverconstrainedError
-        const stream = await navigator.mediaDevices.getDisplayMedia({ 
-            video: { 
-                height: { ideal: 1080 }, // Aim for 1080p
+    try {
+        console.log("Initializing Universal Broadcaster...");
+
+        // 1. Request Media (Adaptive Constraints)
+        // We use 'ideal' so Android phones (which can't do 1080p) don't crash,
+        // while Windows laptops still get the best quality.
+        const stream = await navigator.mediaDevices.getDisplayMedia({
+            video: {
+                height: { ideal: 1080 }, // Aim for 1080p on PC
                 frameRate: { ideal: 60 } // Aim for 60fps
-            }, 
+            },
             audio: {
-                autoGainControl: false,  // True Audio (No volume ducking)
+                autoGainControl: false,  // High fidelity audio
                 echoCancellation: false, // Music/Game audio stays pure
                 noiseSuppression: false,
-                channelCount: 2          // Stereo
-            } 
+                channelCount: 2
+            }
         });
-        
+
         console.log("Stream granted:", stream.id);
 
         videoElement.srcObject = stream;
-        videoElement.muted = true; // Mute local preview to prevent feedback
+        videoElement.muted = true; // Mute local preview
 
         socket.emit("join-room", roomId, "broadcaster");
         socket.emit("broadcaster", roomId);
@@ -49,39 +60,43 @@ export async function init(roomId, videoElement) {
             const peerConnection = new RTCPeerConnection(configuration);
             peerConnections[id] = peerConnection;
 
-            // 1. Add Tracks & Optimize for Motion
+            // 2. Stream Optimization
             stream.getTracks().forEach(track => {
+                // 'motion' is critical for movies/games
                 if (track.kind === 'video' && 'contentHint' in track) {
-                    track.contentHint = 'motion'; // Tells browser to prioritize FPS
+                    track.contentHint = 'motion';
                 }
                 peerConnection.addTrack(track, stream);
             });
 
-            // 2. [NEW] Intel Iris Xe Hardware Acceleration (VP9)
+            // 3. Hardware Acceleration (Intel Iris / Android Adreno)
             try {
                 const transceivers = peerConnection.getTransceivers();
                 for (const t of transceivers) {
                     if (t.sender.track && t.sender.track.kind === 'video') {
                         const caps = RTCRtpSender.getCapabilities('video');
                         if (caps) {
-                            // Prefer VP9 (High Efficiency) -> VP8 -> H.264
-                            const vp9 = caps.codecs.filter(c => c.mimeType === 'video/VP9');
-                            if (vp9.length > 0) {
-                                t.setCodecPreferences(vp9);
+                            // Prefer VP9 (High Efficiency), then VP8, then H.264
+                            const preferredCodecs = caps.codecs.filter(c => 
+                                c.mimeType === 'video/VP9' || c.mimeType === 'video/VP8'
+                            );
+                            if (preferredCodecs.length > 0) {
+                                t.setCodecPreferences(preferredCodecs);
                             }
                         }
                     }
                 }
             } catch (e) {
-                console.warn("VP9 Selection failed, falling back to default.", e);
+                console.warn("Codec preference failed, using default.", e);
             }
 
             peerConnection.onicecandidate = event => {
                 if (event.candidate) socket.emit("candidate", id, event.candidate);
             };
 
-            // 3. Create Offer & Enhance Bitrate
             const offer = await peerConnection.createOffer();
+            
+            // 4. Bitrate & Quality Munging
             const enhancedSdp = enhanceSDP(offer.sdp);
             
             await peerConnection.setLocalDescription({ type: 'offer', sdp: enhancedSdp });
@@ -107,7 +122,6 @@ export async function init(roomId, videoElement) {
             }
         });
 
-        // Handle user clicking "Stop Sharing" on the browser UI
         stream.getVideoTracks()[0].onended = () => {
             alert("Broadcast ended.");
             window.location.reload();
@@ -115,21 +129,19 @@ export async function init(roomId, videoElement) {
 
     } catch (err) {
         console.error("Broadcaster Error:", err);
-        throw err; // Re-throw so room.html can catch it
+        // If user cancelled selection, reload to reset UI
+        if (err.name === 'NotAllowedError') window.location.reload();
+        throw err;
     }
 }
 
-// [SDP Munging] Manually edit the connection setup to force higher quality
 function enhanceSDP(sdp) {
     let newSdp = sdp;
-
-    // VIDEO: 6000kbps (6Mbps). Safe for WiFi, looks great on 1080p.
+    // 6Mbps Video (Safe for WiFi)
     newSdp = newSdp.replace(/a=mid:video\r\n/g, 'a=mid:video\r\nb=AS:6000\r\n');
-
-    // AUDIO: 256kbps. Studio quality audio.
+    // 256kbps Audio (High Quality)
     if (newSdp.indexOf("a=mid:audio") !== -1) {
         newSdp = newSdp.replace(/a=mid:audio\r\n/g, 'a=mid:audio\r\nb=AS:256\r\n');
     }
-
     return newSdp;
 }
