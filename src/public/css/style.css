@@ -1,0 +1,26 @@
+/* Custom Scrollbar Hide */
+::-webkit-scrollbar {
+    display: none;
+}
+body {
+    -ms-overflow-style: none;  /* IE and Edge */
+    scrollbar-width: none;  /* Firefox */
+    background-color: #0f172a; /* Slate 900 */
+}
+
+/* Smooth Fade Animations */
+.fade-enter { opacity: 0; transform: translateY(20px); }
+.fade-enter-active { opacity: 1; transform: translateY(0); transition: opacity 300ms, transform 300ms; }
+.fade-exit { opacity: 1; }
+.fade-exit-active { opacity: 0; transition: opacity 300ms; }
+
+/* Video Player Container */
+#video-wrapper {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    background: black;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}

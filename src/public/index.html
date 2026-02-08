@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Streamy Pro</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/css/style.css">
+    <link rel="manifest" href="/manifest.json">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+</head>
+<body class="flex items-center justify-center h-screen text-white bg-slate-900 overflow-hidden">
+
+    <div class="absolute inset-0 z-0">
+        <div class="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-600/20 rounded-full blur-3xl animate-pulse"></div>
+        <div class="absolute bottom-1/4 right-1/4 w-96 h-96 bg-purple-600/20 rounded-full blur-3xl animate-pulse" style="animation-delay: 1s;"></div>
+    </div>
+
+    <div class="relative z-10 max-w-md w-full p-8 bg-slate-800/80 backdrop-blur-xl rounded-2xl shadow-2xl border border-slate-700 text-center">
+        <h1 class="text-6xl font-black mb-2 tracking-tighter bg-clip-text text-transparent bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400">Streamy</h1>
+        <p class="text-slate-400 mb-8 font-medium">Lossless 60FPS Streaming</p>
+
+        <div class="space-y-5">
+            <button id="hostBtn" class="group w-full py-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 rounded-xl font-bold text-lg shadow-lg shadow-blue-900/40 transition-all transform hover:scale-[1.02]">
+                <span class="flex items-center justify-center gap-2">
+                    🚀 Start 4K Stream
+                </span>
+            </button>
+            
+            <div class="relative group">
+                <input type="text" id="roomInput" placeholder="Paste Room Code or Link" 
+                    class="w-full py-4 px-6 bg-slate-900/50 border border-slate-600 rounded-xl focus:outline-none focus:border-blue-500 focus:bg-slate-900 text-center text-lg placeholder-slate-500 transition-all font-mono">
+                <button id="joinBtn" class="absolute right-2 top-2 bottom-2 aspect-square bg-slate-700 hover:bg-green-600 rounded-lg transition-colors flex items-center justify-center">
+                    ➔
+                </button>
+            </div>
+            
+            <p class="text-xs text-slate-500 mt-4">Optimized for: Chrome, Edge, Safari</p>
+        </div>
+    </div>
+
+    <script type="module">
+        import { generateRoomId } from './js/ui.js';
+
+        document.getElementById('hostBtn').addEventListener('click', () => {
+            const roomId = generateRoomId();
+            window.location.href = `/room.html?room=${roomId}&role=host`;
+        });
+
+        // Smart Join Logic
+        function joinRoom() {
+            const input = document.getElementById('roomInput').value.trim();
+            if (!input) return;
+
+            let roomId = input;
+            // If user pasted a full URL, extract the 'room' ID
+            try {
+                const url = new URL(input);
+                const code = url.searchParams.get("room");
+                if (code) roomId = code;
+            } catch (e) {
+                // Not a URL, treat as raw code
+            }
+
+            window.location.href = `/room.html?room=${roomId}&role=viewer`;
+        }
+
+        document.getElementById('joinBtn').addEventListener('click', joinRoom);
+        document.getElementById('roomInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') joinRoom();
+        });
+    </script>
+</body>
+</html>

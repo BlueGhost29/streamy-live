@@ -1,0 +1,16 @@
+{
+  "name": "Streamy Pro",
+  "short_name": "Streamy",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "orientation": "landscape",
+  "icons": [
+    {
+      "src": "/assets/icons/icon.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
