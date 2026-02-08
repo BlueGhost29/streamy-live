@@ -96,28 +96,35 @@
         document.body.addEventListener('touchstart', showUI);
         showUI();
 
-        // --- CRITICAL FIX: PRE-LOAD THE MODULE ---
+        // --- MODULE LOADING LOGIC ---
         curtain.classList.remove('hidden');
         
         if (role === 'host') {
             btnLabel.innerText = "PREPARING...";
             
-            // 1. Import the file NOW (Before the click)
             import('./js/broadcaster.js').then(module => {
-                // 2. Once loaded, enable the button
                 btnLabel.innerText = "🚀 START BROADCAST";
                 
-                startBtn.onclick = () => {
-                    curtain.classList.add('hidden');
-                    // 3. This runs INSTANTLY now, so browser allows the popup!
-                    module.init(roomId, video);
+                // [FIX] Make this async so we can wait for media selection
+                startBtn.onclick = async () => {
+                    try {
+                        btnLabel.innerText = "SELECT SCREEN...";
+                        // Wait for user to select screen
+                        await module.init(roomId, video);
+                        // Only hide curtain if success
+                        curtain.classList.add('hidden');
+                    } catch (e) {
+                        // User cancelled or error
+                        btnLabel.innerText = "🚀 START BROADCAST";
+                        alert("Broadcast cancelled or failed.");
+                        window.location.reload();
+                    }
                 };
             });
 
         } else {
             btnLabel.innerText = "PREPARING...";
             
-            // Same fix for viewer (pre-load viewer.js)
             import('./js/viewer.js').then(module => {
                 btnLabel.innerText = "JOIN STREAM";
                 
