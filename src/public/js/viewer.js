@@ -1,7 +1,8 @@
 // viewer.js
 import { toggleFullScreen } from './ui.js';
 
-const socket = io();
+// [ARCHITECTURE NOTE] Socket is injected via init(), not created here.
+// This preserves the single-socket architecture.
 
 // ==========================================
 // 1. CONFIGURATION: Azure Private Relay
@@ -23,41 +24,50 @@ const configuration = {
     iceCandidatePoolSize: 2
 };
 
+// Global State
 let peerConnection;
 let wakeLock = null;
 let localAudioStream = null;
 let isMuted = true;
-let isHighQuality = true; // [NEW] Track state
+let isHighQuality = true; // Default to HD
 
-export async function init(roomId, videoElement) {
-    console.log("Initializing Universal Viewer...");
+/**
+ * Initializes the Viewer Logic.
+ * @param {string} roomId - The unique room ID.
+ * @param {HTMLVideoElement} videoElement - The main video player.
+ * @param {object} socket - The shared Socket.io instance.
+ */
+export async function init(roomId, videoElement, socket) {
+    console.log("Initializing Universal Viewer (Shared Socket Mode)...");
     
+    // 1. Prevent screen from sleeping (Critical for long movies)
     requestWakeLock();
     
-    // [iOS Fix] Ensure these attributes are set for Safari
+    // 2. [iOS Fix] Critical attributes for Safari
+    // Without these, iOS will try to hijack the player into its native fullscreen
+    // which breaks our custom UI overlay.
     videoElement.playsInline = true;
     videoElement.autoplay = true; 
     videoElement.controls = false;
-
-    // A. Double Tap Fullscreen
+    
+    // 3. UI: Double Tap to Fullscreen (Mobile Friendly)
     if (videoElement.parentElement) {
         videoElement.parentElement.addEventListener("dblclick", () => {
             toggleFullScreen(videoElement.parentElement);
         });
     }
 
-    // B. Floating Button
+    // 4. UI: Floating Fullscreen Button (Backup)
     createFloatingButton(videoElement);
 
     // ==========================================
-    // NEW: QUALITY TOGGLE LOGIC
+    // 5. QUALITY TOGGLE LOGIC
     // ==========================================
     const qualityBtn = document.getElementById('qualityBtn');
     if (qualityBtn) {
         qualityBtn.onclick = () => {
             isHighQuality = !isHighQuality;
             
-            // UI Update
             if (isHighQuality) {
                 qualityBtn.innerText = "HD";
                 qualityBtn.classList.replace('text-yellow-500', 'text-green-500');
@@ -66,14 +76,15 @@ export async function init(roomId, videoElement) {
                 qualityBtn.classList.replace('text-green-500', 'text-yellow-500');
             }
 
-            // Send Request
             const mode = isHighQuality ? 'high' : 'low';
-            console.log("Requesting quality:", mode);
+            console.log(`Requesting quality: ${mode}`);
             socket.emit("bitrate_request", roomId, mode);
         };
     }
 
-    // [C]. Microphone Logic (Enhanced)
+    // ==========================================
+    // 6. MICROPHONE LOGIC (Fixed for iOS/Android)
+    // ==========================================
     const micBtn = document.getElementById('micBtn');
     const micStatus = document.getElementById('micStatus');
     
@@ -82,66 +93,106 @@ export async function init(roomId, videoElement) {
             if (isMuted) {
                 // --- Turn Mic ON ---
                 try {
-                    // [FIX] Aggressive Echo Cancellation for Mobile
-                    localAudioStream = await navigator.mediaDevices.getUserMedia({ 
+                    console.log("Requesting Mic Access...");
+                    
+                    // [iOS FIX] Mobile often prefers mono (channelCount: 1)
+                    // This prevents the robotic voice/echo issues on iPhones
+                    const constraints = {
                         audio: { 
                             echoCancellation: true,
                             noiseSuppression: true,
-                            autoGainControl: true
-                        } 
-                    });
-                    
+                            autoGainControl: true,
+                            channelCount: 1  // Crucial for iOS Safari stability
+                        }
+                    };
+
+                    localAudioStream = await navigator.mediaDevices.getUserMedia(constraints);
                     const audioTrack = localAudioStream.getAudioTracks()[0];
                     
                     if (peerConnection) {
-                        const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'audio');
-                        if (sender) {
-                            sender.replaceTrack(audioTrack);
+                        const senders = peerConnection.getSenders();
+                        // Try to find an existing audio sender to replace
+                        // This avoids renegotiation (which causes blips)
+                        const audioSender = senders.find(s => s.track && s.track.kind === 'audio') 
+                                         || senders.find(s => s.track === null && s.dtlsTransport);
+
+                        if (audioSender) {
+                            console.log("Replacing existing audio track (Zero Renegotiation)");
+                            await audioSender.replaceTrack(audioTrack);
                         } else {
-                            // If no audio sender exists yet, add it
+                            console.warn("No audio sender found. Forcing AddTrack (Might restart stream)...");
                             peerConnection.addTrack(audioTrack, localAudioStream);
                         }
                     }
 
+                    // UI Updates
                     micStatus.innerText = "Speaking";
                     micStatus.classList.add("text-red-500", "animate-pulse");
+                    micBtn.classList.add("text-white");
                     isMuted = false;
+
                 } catch (err) {
-                    console.error("Mic Error:", err);
-                    alert("Microphone access denied. Check browser permissions.");
+                    console.error("Mic Access Error:", err);
+                    alert("Microphone access denied. Please allow permissions in your browser settings.");
                 }
             } else {
                 // --- Turn Mic OFF ---
+                console.log("Muting Mic...");
+                // Stop hardware to release the red dot on browser tab
                 if (localAudioStream) {
-                    localAudioStream.getTracks().forEach(track => track.stop()); // Completely stop hardware
+                    localAudioStream.getTracks().forEach(track => track.stop());
                 }
+                
+                // Set sender track to null (silence on stream)
+                if (peerConnection) {
+                    const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'audio');
+                    if (sender) {
+                        sender.replaceTrack(null);
+                    }
+                }
+
+                // UI Updates
                 micStatus.innerText = "Muted";
                 micStatus.classList.remove("text-red-500", "animate-pulse");
+                micBtn.classList.remove("text-white");
                 isMuted = true;
             }
         };
     }
 
     // ==========================================
-    // 3. WebRTC Connection Logic
+    // 7. WEBRTC CONNECTION LOGIC
     // ==========================================
+    // Join the room using the Shared Socket
     socket.emit("join-room", roomId, "viewer");
 
+    // Cleanup listeners
+    socket.off("offer");
     socket.on("offer", async (id, description) => {
-        if (peerConnection) {
-            peerConnection.close();
-        }
+        console.log("Received Offer from Host");
+        if (peerConnection) peerConnection.close();
         
         peerConnection = new RTCPeerConnection(configuration);
         
-        // [CHANGE] Audio is 'sendrecv' so we can talk back
+        // [IMPORTANT] Setup transceivers BEFORE setting remote description
+        // Audio: SendRecv (For Mic), Video: RecvOnly (For Movie)
         peerConnection.addTransceiver('audio', { direction: 'sendrecv' });
         peerConnection.addTransceiver('video', { direction: 'recvonly' });
 
         peerConnection.ontrack = event => {
-            // [iOS Fix] Ensure we assign stream AND play
+            console.log("Track received:", event.track.kind);
+            // [iOS Fix] Direct assignment works best with unified streams
             videoElement.srcObject = event.streams[0];
-            videoElement.play().catch(e => console.log("Autoplay blocked (waiting for interaction):", e));
+            
+            // Promise handling for play()
+            const playPromise = videoElement.play();
+            if (playPromise !== undefined) {
+                playPromise.catch(error => {
+                    console.log("Autoplay prevented. Waiting for user interaction.", error);
+                    // Usually we show a "Click to Play" overlay here, but our 
+                    // 'curtain' button handled the first interaction.
+                });
+            }
         };
 
         peerConnection.onicecandidate = event => {
@@ -152,20 +203,22 @@ export async function init(roomId, videoElement) {
         
         peerConnection.oniceconnectionstatechange = () => {
             const state = peerConnection.iceConnectionState;
-            if (state === 'disconnected') console.warn("Stream disconnected...");
+            console.log("ICE Connection State:", state);
+            if (state === 'disconnected') console.warn("Stream unstable...");
+            if (state === 'failed') console.error("Stream failed to connect.");
         };
 
         try {
             await peerConnection.setRemoteDescription(description);
             const answer = await peerConnection.createAnswer();
             await peerConnection.setLocalDescription(answer);
-            
             socket.emit("answer", id, peerConnection.localDescription);
         } catch (err) {
-            console.error("Error establishing connection:", err);
+            console.error("WebRTC Handshake Error:", err);
         }
     });
 
+    socket.off("candidate");
     socket.on("candidate", (id, candidate) => {
         if (peerConnection && peerConnection.remoteDescription) {
             peerConnection.addIceCandidate(new RTCIceCandidate(candidate))
@@ -173,29 +226,33 @@ export async function init(roomId, videoElement) {
         }
     });
 
+    socket.off("broadcaster");
     socket.on("broadcaster", () => {
+        console.log("Broadcaster signaled ready, requesting stream...");
         socket.emit("watcher"); 
     });
     
+    socket.off("disconnectPeer");
     socket.on("disconnectPeer", () => {
         alert("Host ended the stream.");
         window.location.href = "/";
     });
     
+    // Cleanup on page exit
     window.onunload = window.onbeforeunload = () => {
-        socket.close();
         if (peerConnection) peerConnection.close();
         if (wakeLock) wakeLock.release();
     };
 }
 
 // ==========================================
-// 4. Helper Functions
+// 8. HELPER FUNCTIONS
 // ==========================================
 async function requestWakeLock() {
     try {
         if ('wakeLock' in navigator) {
             wakeLock = await navigator.wakeLock.request('screen');
+            console.log("Wake Lock active");
         }
     } catch (err) {
         console.warn(`Wake Lock failed: ${err.message}`);
@@ -209,6 +266,7 @@ function createFloatingButton(videoElement) {
     btn.id = "floatingFsBtn";
     btn.innerText = "⛶ Fullscreen";
     
+    // CSS Styles
     Object.assign(btn.style, {
         position: "fixed",
         bottom: "80px",
