@@ -6,21 +6,30 @@
 // 1. CONFIGURATION: Azure Private Relay
 // ==========================================
 // Critical for bypassing firewalls on 4G/5G networks and strict NATs.
+// ==========================================
+// 1. CONFIGURATION: Azure Private Relay (Firewall Bypass)
+// ==========================================
 const configuration = {
     iceServers: [
+        // 1. Google STUN (Cheap & Fast initial check)
         { urls: 'stun:stun.l.google.com:19302' },
+
+        // 2. PRIMARY: Azure on Port 443 (The "University Bypass")
+        // We force TCP transport because UDP is usually blocked.
         {
-            urls: 'turn:20.205.18.133:3478?transport=tcp',
+            urls: 'turn:20.205.18.133:443?transport=tcp',
             username: 'sharvari',
             credential: 'movie'
         },
+
+        // 3. BACKUP: Standard Port 3478 (Just in case)
         {
             urls: 'turn:20.205.18.133:3478?transport=udp',
             username: 'sharvari',
             credential: 'movie'
         }
     ],
-    iceCandidatePoolSize: 4 // Increased pool size for faster connection start
+    iceCandidatePoolSize: 2
 };
 
 // Global State Management
