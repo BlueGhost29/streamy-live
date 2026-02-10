@@ -3,13 +3,15 @@
 // ==========================================
 // 1. CONFIGURATION: Azure Private Relay (Universal Mode)
 // ==========================================
+// We enable BOTH UDP (Fast) and TCP (Stealth) candidates.
+// We REMOVED 'relay' policy to allow Direct P2P (Best Quality).
 const configuration = {
     iceServers: [
-        // 1. Google STUN (Speed Check)
+        // 1. Google STUN (Speed Check / Direct P2P)
         { urls: 'stun:stun.l.google.com:19302' },
 
         // 2. PRIMARY: The Fast Lane (UDP 3478)
-        // Best for Sharvari's Mobile Data & Your Home WiFi.
+        // Best for Mobile Data & Home WiFi.
         {
             urls: 'turn:57.158.27.139:3478?transport=udp',
             username: 'sharvari',
@@ -17,18 +19,17 @@ const configuration = {
         },
 
         // 3. BACKUP: The Stealth Lane (TCP 443)
-        // The "University Bypass". If UDP is blocked, this saves the stream.
+        // The "University Bypass". Mimics HTTPS traffic.
         {
             urls: 'turn:57.158.27.139:443?transport=tcp',
             username: 'sharvari',
             credential: 'movie'
         }
     ],
-    iceCandidatePoolSize: 2,
-    // [CRITICAL] We set this to 'relay' to force the usage of our server
-    // This prevents the browser from wasting time trying (and failing) P2P
-    iceTransportPolicy: 'relay' 
+    iceCandidatePoolSize: 2
+    // [CRITICAL CHANGE] Removed 'iceTransportPolicy: relay' to allow P2P.
 };
+
 // Global State Management
 const peerConnections = {};
 let localStream = null;      // Raw capture from screen
@@ -46,9 +47,9 @@ let mainGainNode = null;     // Incoming Viewer Audio Booster
  * Initializes the Broadcaster Logic.
  */
 export async function init(roomId, videoElement, socket) {
-    console.log("Initializing Pro Broadcaster (Shared Socket Mode)...");
+    console.log("Initializing Pro Broadcaster (Universal Mode)...");
 
-    // [NEW] Initialize the Audience UI
+    // [UI] Initialize the Audience Widget
     createAudienceWidget();
 
     // [COMPATIBILITY CHECK] iOS Hosting Block
@@ -61,20 +62,20 @@ export async function init(roomId, videoElement, socket) {
 
     try {
         // ==========================================
-        // 2. SETUP AUDIO CONTEXT
+        // 2. SETUP AUDIO CONTEXT (The Mixer)
         // ==========================================
         const AudioContext = window.AudioContext || window.webkitAudioContext;
         audioContext = new AudioContext();
         audioDestination = audioContext.createMediaStreamDestination();
         
         mainGainNode = audioContext.createGain();
-        mainGainNode.gain.value = 1.5; // Boost volume by 50%
+        mainGainNode.gain.value = 1.5; // Boost volume by 50% for viewers
         mainGainNode.connect(audioContext.destination);
 
-        // Auto-Resume Audio Context
+        // Auto-Resume Audio Context (Fix for Chrome Autoplay Policy)
         const resumeAudio = () => {
             if (audioContext.state === 'suspended') {
-                audioContext.resume().then(() => console.log("Audio Engine Resumed"));
+                audioContext.resume().then(() => console.log("[Audio] Engine Resumed"));
             }
         };
         document.body.addEventListener('click', resumeAudio);
@@ -119,11 +120,11 @@ export async function init(roomId, videoElement, socket) {
         // B. Route System Audio to Mixer
         const systemAudioTrack = localStream.getAudioTracks()[0];
         if (systemAudioTrack) {
-            console.log("System Audio Detected: Routing to Mixer...");
+            console.log("[Audio] System Audio Detected: Routing to Mixer...");
             systemSource = audioContext.createMediaStreamSource(localStream);
             systemSource.connect(audioDestination); 
         } else {
-            console.warn("No System Audio detected. Ensure 'Share Audio' was checked.");
+            console.warn("[Audio] No System Audio detected. Ensure 'Share Audio' was checked.");
         }
 
         // C. Add Mixed Audio Track to Combined Stream
@@ -133,7 +134,7 @@ export async function init(roomId, videoElement, socket) {
         // Preview setup
         console.log("Combined Stream Ready:", combinedStream.id);
         videoElement.srcObject = combinedStream;
-        videoElement.muted = true; // Local mute
+        videoElement.muted = true; // Local mute to prevent echo
 
         // ==========================================
         // 5. JOIN ROOM (Socket Operations)
@@ -147,7 +148,7 @@ export async function init(roomId, videoElement, socket) {
         window.toggleHostMic = async (shouldEnable) => {
             try {
                 if (shouldEnable) {
-                    console.log("Activating Host Mic...");
+                    console.log("[Mic] Activating Host Mic...");
                     micStream = await navigator.mediaDevices.getUserMedia({ 
                         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } 
                     });
@@ -156,13 +157,13 @@ export async function init(roomId, videoElement, socket) {
                     micSource.connect(audioDestination);
                     return true;
                 } else {
-                    console.log("Deactivating Host Mic...");
+                    console.log("[Mic] Deactivating Host Mic...");
                     if (micSource) { micSource.disconnect(); micSource = null; }
                     if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
                     return true; 
                 }
             } catch (e) {
-                console.error("Mic toggle failed:", e);
+                console.error("[Mic] Toggle failed:", e);
                 return false;
             }
         };
@@ -174,7 +175,7 @@ export async function init(roomId, videoElement, socket) {
         socket.on("watcher", async (id) => {
             console.log("Connecting to Viewer:", id);
 
-            // [NEW UI] Add to Viewer List
+            // [UI] Add to Viewer List
             updateAudienceList(id, "Connecting...", "orange");
             
             const peerConnection = new RTCPeerConnection(configuration);
@@ -185,24 +186,29 @@ export async function init(roomId, videoElement, socket) {
                 peerConnection.addTrack(track, combinedStream);
             });
 
-            // B. Prepare Audio Transceiver
+            // B. Prepare Audio Transceiver (Bidirectional)
             peerConnection.addTransceiver('audio', { direction: 'sendrecv' });
 
-            // C. Handle Incoming Audio
+            // C. Handle Incoming Viewer Audio (Voice Call)
             peerConnection.ontrack = (event) => {
                 if (event.streams && event.streams[0]) {
+                    console.log(`[Audio] Receiving voice from Viewer ${id}`);
                     try {
                         const source = audioContext.createMediaStreamSource(event.streams[0]);
-                        source.connect(mainGainNode);
+                        source.connect(mainGainNode); // Add to mixer
+                        
+                        // Fallback Audio Element (just in case WebAudio fails)
                         const audio = new Audio();
                         audio.srcObject = event.streams[0];
-                        audio.volume = 0; 
+                        audio.volume = 0; // Prevent double audio, let Mixer handle it
                         audio.play().catch(e => {}); 
-                    } catch(err) {}
+                    } catch(err) {
+                        console.error("Audio Mixing Error:", err);
+                    }
                 }
             };
 
-            // D. Force VP9 Codec
+            // D. Force VP9 Codec (4K Clarity)
             try {
                 const transceivers = peerConnection.getTransceivers();
                 for (const t of transceivers) {
@@ -225,7 +231,7 @@ export async function init(roomId, videoElement, socket) {
                 const state = peerConnection.iceConnectionState;
                 console.log(`Connection state with ${id}: ${state}`);
                 
-                // [NEW UI] Update Status Dots based on connection health
+                // [UI] Update Status Dots
                 if (state === 'connected') updateAudienceList(id, "Online", "#22c55e"); // Green
                 if (state === 'disconnected') updateAudienceList(id, "Unstable", "#eab308"); // Yellow
                 if (state === 'failed' || state === 'closed') removeViewerFromList(id);
@@ -261,16 +267,16 @@ export async function init(roomId, videoElement, socket) {
 
         socket.off("disconnectPeer");
         socket.on("disconnectPeer", id => {
+            console.log(`Viewer ${id} disconnected.`);
             if (peerConnections[id]) {
                 peerConnections[id].close();
                 delete peerConnections[id];
-                // [NEW UI] Remove from list
                 removeViewerFromList(id);
             }
         });
 
         // ==========================================
-        // 9. DYNAMIC BITRATE CONTROL (RESTORED)
+        // 9. DYNAMIC BITRATE CONTROL (HD/SD)
         // ==========================================
         socket.off("bitrate_request");
         socket.on("bitrate_request", async (viewerId, quality) => {
@@ -321,7 +327,7 @@ function enhanceSDP(sdp) {
 }
 
 // ==========================================
-// 10. AUDIENCE WIDGET (NEW UI FEATURES)
+// 10. AUDIENCE WIDGET (UI)
 // ==========================================
 function createAudienceWidget() {
     if (document.getElementById('audienceWidget')) return;
@@ -357,11 +363,9 @@ function updateAudienceList(id, status, color) {
 
     if (emptyState) emptyState.style.display = 'none';
 
-    // Check if ID already exists
     let item = document.getElementById(`v-${id}`);
     const shortId = id.substr(0, 4).toUpperCase();
     
-    // Create the visual row for the viewer
     const content = `
         <span style="display:flex; align-items:center;">
             <span style="width:8px; height:8px; border-radius:50%; background:${color}; margin-right:8px; box-shadow: 0 0 5px ${color};"></span>
@@ -383,7 +387,6 @@ function updateAudienceList(id, status, color) {
         item.innerHTML = content;
     }
 
-    // Update Count
     const total = Object.keys(peerConnections).length;
     if(count) count.innerText = total;
 }
@@ -399,7 +402,6 @@ function removeViewerFromList(id) {
     const list = document.getElementById('viewerList');
     const emptyState = document.getElementById('emptyState');
     
-    // If no one is left, show the "Waiting..." message
     if (total === 0 && emptyState) {
         emptyState.style.display = 'block';
     }

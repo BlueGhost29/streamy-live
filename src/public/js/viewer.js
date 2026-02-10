@@ -1,15 +1,16 @@
-// viewer.js
+// src/public/js/viewer.js
 import { toggleFullScreen } from './ui.js';
-
-// [ARCHITECTURE NOTE] Socket is injected via init(), not created here.
-// This preserves the single-socket architecture.
 
 // ==========================================
 // 1. CONFIGURATION: Azure Private Relay (Universal Mode)
 // ==========================================
+// This configuration allows 3 paths:
+// 1. Direct P2P (Best Quality, Lowest Latency)
+// 2. UDP Relay (Fast, Good for Mobile Data)
+// 3. TCP Relay (Stealth, Good for University WiFi)
 const configuration = {
     iceServers: [
-        // 1. Google STUN (Speed Check)
+        // 1. Google STUN (Speed Check / Direct P2P discovery)
         { urls: 'stun:stun.l.google.com:19302' },
 
         // 2. PRIMARY: The Fast Lane (UDP 3478)
@@ -21,20 +22,22 @@ const configuration = {
         },
 
         // 3. BACKUP: The Stealth Lane (TCP 443)
-        // The "University Bypass". If UDP is blocked, this saves the stream.
+        // The "University Bypass". Mimics HTTPS traffic.
         {
             urls: 'turn:57.158.27.139:443?transport=tcp',
             username: 'sharvari',
             credential: 'movie'
         }
     ],
-    iceCandidatePoolSize: 2,
-    // [CRITICAL] We set this to 'relay' to force the usage of our server
-    // This prevents the browser from wasting time trying (and failing) P2P
-    iceTransportPolicy: 'relay' 
+    iceCandidatePoolSize: 2
+    // [CRITICAL] 'iceTransportPolicy: relay' IS REMOVED.
+    // This allows the browser to use Direct P2P if available.
 };
-// Global State
-let peerConnection;
+
+// ==========================================
+// 2. GLOBAL STATE
+// ==========================================
+let peerConnection = null;
 let wakeLock = null;
 let localAudioStream = null;
 let isMuted = true;
@@ -47,10 +50,14 @@ let isHighQuality = true; // Default to HD
  * @param {object} socket - The shared Socket.io instance.
  */
 export async function init(roomId, videoElement, socket) {
-    console.log("Initializing Universal Viewer (Shared Socket Mode)...");
+    console.log("Initializing Universal Viewer (Auto-Recover Mode)...");
+    
+    // ------------------------------------------
+    // A. SYSTEM PREP
+    // ------------------------------------------
     
     // 1. Prevent screen from sleeping (Critical for long movies)
-    requestWakeLock();
+    await requestWakeLock();
     
     // 2. [iOS Fix] Critical attributes for Safari
     // Without these, iOS will try to hijack the player into its native fullscreen
@@ -62,6 +69,7 @@ export async function init(roomId, videoElement, socket) {
     // 3. UI: Double Tap to Fullscreen (Mobile Friendly)
     if (videoElement.parentElement) {
         videoElement.parentElement.addEventListener("dblclick", () => {
+            console.log("Double tap detected: Toggling Fullscreen");
             toggleFullScreen(videoElement.parentElement);
         });
     }
@@ -69,12 +77,14 @@ export async function init(roomId, videoElement, socket) {
     // 4. UI: Floating Fullscreen Button (Backup)
     createFloatingButton(videoElement);
 
-    // ==========================================
-    // 5. QUALITY TOGGLE LOGIC
-    // ==========================================
+    // ------------------------------------------
+    // B. QUALITY TOGGLE LOGIC
+    // ------------------------------------------
     const qualityBtn = document.getElementById('qualityBtn');
     if (qualityBtn) {
-        qualityBtn.onclick = () => {
+        qualityBtn.onclick = (e) => {
+            if(e) e.preventDefault(); // Stop any default behavior
+
             isHighQuality = !isHighQuality;
             
             if (isHighQuality) {
@@ -86,23 +96,30 @@ export async function init(roomId, videoElement, socket) {
             }
 
             const mode = isHighQuality ? 'high' : 'low';
-            console.log(`Requesting quality: ${mode}`);
+            console.log(`[Quality] Requesting bitrate change to: ${mode}`);
             socket.emit("bitrate_request", roomId, mode);
         };
     }
 
-    // ==========================================
-    // 6. MICROPHONE LOGIC (Fixed for iOS/Android)
-    // ==========================================
+    // ------------------------------------------
+    // C. MICROPHONE LOGIC (THE CRITICAL FIX)
+    // ------------------------------------------
     const micBtn = document.getElementById('micBtn');
     const micStatus = document.getElementById('micStatus');
     
     if (micBtn) {
-        micBtn.onclick = async () => {
+        micBtn.onclick = async (e) => {
+            // [CRITICAL FIX] STOP PAGE RELOAD
+            // This prevents the "Ghost User" issue where the socket ID changes
+            if(e) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+
             if (isMuted) {
-                // --- Turn Mic ON ---
+                // >>>>>> TURNING MIC ON <<<<<<
                 try {
-                    console.log("Requesting Mic Access...");
+                    console.log("[Mic] Requesting Access...");
                     
                     // [iOS FIX] Mobile often prefers mono (channelCount: 1)
                     // This prevents the robotic voice/echo issues on iPhones
@@ -117,19 +134,22 @@ export async function init(roomId, videoElement, socket) {
 
                     localAudioStream = await navigator.mediaDevices.getUserMedia(constraints);
                     const audioTrack = localAudioStream.getAudioTracks()[0];
+                    console.log("[Mic] Access Granted:", audioTrack.label);
                     
                     if (peerConnection) {
                         const senders = peerConnection.getSenders();
                         // Try to find an existing audio sender to replace
-                        // This avoids renegotiation (which causes blips)
+                        // This avoids renegotiation (which causes blips/black screens)
                         const audioSender = senders.find(s => s.track && s.track.kind === 'audio') 
                                          || senders.find(s => s.track === null && s.dtlsTransport);
 
                         if (audioSender) {
-                            console.log("Replacing existing audio track (Zero Renegotiation)");
+                            console.log("[Mic] Replacing existing silence track with Mic audio...");
                             await audioSender.replaceTrack(audioTrack);
                         } else {
-                            console.warn("No audio sender found. Forcing AddTrack (Might restart stream)...");
+                            // Fallback: If no sender exists, we must add one.
+                            // This might cause a brief "Renegotiation Needed" event.
+                            console.warn("[Mic] No audio sender found. Forcing AddTrack...");
                             peerConnection.addTrack(audioTrack, localAudioStream);
                         }
                     }
@@ -141,18 +161,22 @@ export async function init(roomId, videoElement, socket) {
                     isMuted = false;
 
                 } catch (err) {
-                    console.error("Mic Access Error:", err);
+                    console.error("[Mic] Access Error:", err);
                     alert("Microphone access denied. Please allow permissions in your browser settings.");
                 }
             } else {
-                // --- Turn Mic OFF ---
-                console.log("Muting Mic...");
-                // Stop hardware to release the red dot on browser tab
+                // >>>>>> TURNING MIC OFF <<<<<<
+                console.log("[Mic] Muting...");
+                
+                // 1. Stop hardware to release the red dot on browser tab
                 if (localAudioStream) {
-                    localAudioStream.getTracks().forEach(track => track.stop());
+                    localAudioStream.getTracks().forEach(track => {
+                        track.stop();
+                    });
+                    localAudioStream = null;
                 }
                 
-                // Set sender track to null (silence on stream)
+                // 2. Set sender track to null (sends digital silence)
                 if (peerConnection) {
                     const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'audio');
                     if (sender) {
@@ -169,85 +193,112 @@ export async function init(roomId, videoElement, socket) {
         };
     }
 
-    // ==========================================
-    // 7. WEBRTC CONNECTION LOGIC
-    // ==========================================
-    // Join the room using the Shared Socket
+    // ------------------------------------------
+    // D. SOCKET & WEBRTC LOGIC
+    // ------------------------------------------
+    
+    // 1. Join Room
+    console.log(`[Socket] Joining room: ${roomId}`);
     socket.emit("join-room", roomId, "viewer");
 
-    // Cleanup listeners
+    // 2. Robust Auto-Rejoin
+    // If 4G drops and reconnects, this ensures we don't get stuck in limbo
+    socket.on("connect", () => {
+        console.log("[Socket] Reconnected! Rejoining room...");
+        socket.emit("join-room", roomId, "viewer");
+    });
+
+    // 3. Handle WebRTC Offer
     socket.off("offer");
     socket.on("offer", async (id, description) => {
-        console.log("Received Offer from Host");
-        if (peerConnection) peerConnection.close();
+        console.log("[WebRTC] Received Offer from Host");
+        
+        // Safety: Close existing connection if any
+        if (peerConnection) {
+            console.warn("[WebRTC] Closing old connection before accepting new one.");
+            peerConnection.close();
+        }
         
         peerConnection = new RTCPeerConnection(configuration);
         
         // [IMPORTANT] Setup transceivers BEFORE setting remote description
-        // Audio: SendRecv (For Mic), Video: RecvOnly (For Movie)
+        // Audio: SendRecv (Allows us to send Mic audio later)
+        // Video: RecvOnly (We only watch the movie)
         peerConnection.addTransceiver('audio', { direction: 'sendrecv' });
         peerConnection.addTransceiver('video', { direction: 'recvonly' });
 
+        // Handle Incoming Stream
         peerConnection.ontrack = event => {
-            console.log("Track received:", event.track.kind);
-            // [iOS Fix] Direct assignment works best with unified streams
-            videoElement.srcObject = event.streams[0];
+            console.log("[WebRTC] Track received:", event.track.kind);
             
-            // Promise handling for play()
-            const playPromise = videoElement.play();
-            if (playPromise !== undefined) {
-                playPromise.catch(error => {
-                    console.log("Autoplay prevented. Waiting for user interaction.", error);
-                    // Usually we show a "Click to Play" overlay here, but our 
-                    // 'curtain' button handled the first interaction.
-                });
+            // [iOS Fix] Direct assignment works best with unified streams
+            if (event.streams && event.streams[0]) {
+                videoElement.srcObject = event.streams[0];
+                
+                // Promise handling for play() to catch Autoplay errors
+                const playPromise = videoElement.play();
+                if (playPromise !== undefined) {
+                    playPromise.catch(error => {
+                        console.log("[Player] Autoplay prevented. Waiting for interaction.", error);
+                    });
+                }
             }
         };
 
+        // Handle ICE Candidates
         peerConnection.onicecandidate = event => {
             if (event.candidate) {
+                // console.log("[ICE] Generated candidate"); // Verbose
                 socket.emit("candidate", id, event.candidate);
             }
         };
         
+        // Monitor Connection Health
         peerConnection.oniceconnectionstatechange = () => {
             const state = peerConnection.iceConnectionState;
-            console.log("ICE Connection State:", state);
+            console.log(`[ICE] Connection State: ${state}`);
             if (state === 'disconnected') console.warn("Stream unstable...");
             if (state === 'failed') console.error("Stream failed to connect.");
         };
 
+        // Process the Offer
         try {
             await peerConnection.setRemoteDescription(description);
             const answer = await peerConnection.createAnswer();
             await peerConnection.setLocalDescription(answer);
+            
+            console.log("[WebRTC] Sending Answer...");
             socket.emit("answer", id, peerConnection.localDescription);
         } catch (err) {
-            console.error("WebRTC Handshake Error:", err);
+            console.error("[WebRTC] Handshake Error:", err);
         }
     });
 
+    // 4. Handle ICE Candidates from Host
     socket.off("candidate");
     socket.on("candidate", (id, candidate) => {
         if (peerConnection && peerConnection.remoteDescription) {
             peerConnection.addIceCandidate(new RTCIceCandidate(candidate))
-                .catch(e => console.error("Error adding candidate:", e));
+                .catch(e => console.error("[ICE] Error adding candidate:", e));
         }
     });
 
+    // 5. Host Signaling
     socket.off("broadcaster");
     socket.on("broadcaster", () => {
-        console.log("Broadcaster signaled ready, requesting stream...");
+        console.log("[Signal] Broadcaster is ready. Requesting stream...");
         socket.emit("watcher"); 
     });
     
+    // 6. Host Disconnect
     socket.off("disconnectPeer");
     socket.on("disconnectPeer", () => {
-        alert("Host ended the stream.");
+        console.log("[Signal] Host disconnected.");
+        alert("The Host has ended the stream.");
         window.location.href = "/";
     });
     
-    // Cleanup on page exit
+    // 7. Cleanup on page exit
     window.onunload = window.onbeforeunload = () => {
         if (peerConnection) peerConnection.close();
         if (wakeLock) wakeLock.release();
@@ -261,10 +312,10 @@ async function requestWakeLock() {
     try {
         if ('wakeLock' in navigator) {
             wakeLock = await navigator.wakeLock.request('screen');
-            console.log("Wake Lock active");
+            console.log("[System] Wake Lock active");
         }
     } catch (err) {
-        console.warn(`Wake Lock failed: ${err.message}`);
+        console.warn(`[System] Wake Lock failed: ${err.message}`);
     }
 }
 
