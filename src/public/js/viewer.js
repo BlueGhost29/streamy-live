@@ -5,27 +5,18 @@ import { toggleFullScreen } from './ui.js';
 // This preserves the single-socket architecture.
 
 // ==========================================
-// 1. CONFIGURATION: Azure Private Relay
-// ==========================================
-// ==========================================
-// 1. CONFIGURATION: Azure Private Relay (Firewall Bypass)
+// 1. CONFIGURATION: Azure Private Relay (Stealth Mode)
 // ==========================================
 const configuration = {
     iceServers: [
-        // 1. Google STUN (Cheap & Fast initial check)
+        // 1. Google STUN (Speed Check)
         { urls: 'stun:stun.l.google.com:19302' },
 
-        // 2. PRIMARY: Azure on Port 443 (The "University Bypass")
-        // We force TCP transport because UDP is usually blocked.
+        // 2. PRIMARY: The Stealth Lane (TCP 443)
+        // This is the "University Bypass". It mimics HTTPS traffic.
+        // We rely 100% on this because it is the only one guaranteed to pass firewalls.
         {
-            urls: 'turn:20.205.18.133:443?transport=tcp',
-            username: 'sharvari',
-            credential: 'movie'
-        },
-
-        // 3. BACKUP: Standard Port 3478 (Just in case)
-        {
-            urls: 'turn:20.205.18.133:3478?transport=udp',
+            urls: 'turn:57.158.27.139:443?transport=tcp',
             username: 'sharvari',
             credential: 'movie'
         }
