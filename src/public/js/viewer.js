@@ -5,25 +5,34 @@ import { toggleFullScreen } from './ui.js';
 // This preserves the single-socket architecture.
 
 // ==========================================
-// 1. CONFIGURATION: Azure Private Relay (Stealth Mode)
+// 1. CONFIGURATION: Azure Private Relay (Universal Mode)
 // ==========================================
 const configuration = {
     iceServers: [
         // 1. Google STUN (Speed Check)
         { urls: 'stun:stun.l.google.com:19302' },
 
-        // 2. PRIMARY: The Stealth Lane (TCP 443)
-        // This is the "University Bypass". It mimics HTTPS traffic.
-        // We rely 100% on this because it is the only one guaranteed to pass firewalls.
+        // 2. PRIMARY: The Fast Lane (UDP 3478)
+        // Best for Sharvari's Mobile Data & Your Home WiFi.
+        {
+            urls: 'turn:57.158.27.139:3478?transport=udp',
+            username: 'sharvari',
+            credential: 'movie'
+        },
+
+        // 3. BACKUP: The Stealth Lane (TCP 443)
+        // The "University Bypass". If UDP is blocked, this saves the stream.
         {
             urls: 'turn:57.158.27.139:443?transport=tcp',
             username: 'sharvari',
             credential: 'movie'
         }
     ],
-    iceCandidatePoolSize: 2
+    iceCandidatePoolSize: 2,
+    // [CRITICAL] We set this to 'relay' to force the usage of our server
+    // This prevents the browser from wasting time trying (and failing) P2P
+    iceTransportPolicy: 'relay' 
 };
-
 // Global State
 let peerConnection;
 let wakeLock = null;
