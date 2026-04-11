@@ -141,7 +141,10 @@ export async function init(roomId, videoElement, socket, username) {
                         viewerMediaSource.connect(viewerCompressor);
                         viewerCompressor.connect(window.viewerAecDest);
                         
-                        if (!window.viewerAecPlayer) window.viewerAecPlayer = new Audio();
+                        if (!window.viewerAecPlayer) {
+                            window.viewerAecPlayer = new Audio();
+                            document.body.appendChild(window.viewerAecPlayer);
+                        }
                         window.viewerAecPlayer.srcObject = window.viewerAecDest.stream;
                         window.viewerAecPlayer.play().catch(e=>{});
                         
@@ -200,18 +203,13 @@ export async function init(roomId, videoElement, socket, username) {
                     console.log("[Mic] Access Granted:", audioTrack.label);
                     
                     if (peerConnection) {
-                        // [PRODUCTION UPGRADE] Modern Transceiver Mapping
-                        // Safely locate the sender without relying on volatile dtlsTransport states
-                        const transceivers = peerConnection.getTransceivers();
-                        const audioTransceiver = transceivers.find(t => t.receiver && t.receiver.track && t.receiver.track.kind === 'audio');
-                        const audioSender = audioTransceiver ? audioTransceiver.sender : null;
-
-                        if (audioSender) {
+                        // Locate the TRUE Voice Transceiver (which the Host always maps as sendrecv)
+                        const voiceTransceiver = peerConnection.getTransceivers().find(t => t.direction === 'sendrecv' || t.currentDirection === 'sendrecv');
+                        
+                        if (voiceTransceiver && voiceTransceiver.sender) {
                             console.log("[Mic] Replacing existing silence track with Mic audio...");
-                            await audioSender.replaceTrack(audioTrack);
+                            await voiceTransceiver.sender.replaceTrack(audioTrack);
                         } else {
-                            // Fallback: If no sender exists, we must add one.
-                            // This might cause a brief "Renegotiation Needed" event.
                             console.warn("[Mic] No audio sender found. Forcing AddTrack...");
                             peerConnection.addTrack(audioTrack, localAudioStream);
                         }
@@ -241,10 +239,9 @@ export async function init(roomId, videoElement, socket, username) {
                 
                 // 2. Safely wipe the sender sequence (digital silence)
                 if (peerConnection) {
-                    const transceivers = peerConnection.getTransceivers();
-                    const audioTransceiver = transceivers.find(t => t.receiver && t.receiver.track && t.receiver.track.kind === 'audio');
-                    if (audioTransceiver && audioTransceiver.sender) {
-                        audioTransceiver.sender.replaceTrack(null);
+                    const voiceTransceiver = peerConnection.getTransceivers().find(t => t.direction === 'sendrecv' || t.currentDirection === 'sendrecv');
+                    if (voiceTransceiver && voiceTransceiver.sender) {
+                        voiceTransceiver.sender.replaceTrack(null);
                     }
                 }
 
@@ -282,6 +279,7 @@ export async function init(roomId, videoElement, socket, username) {
         if (peerConnection) {
             console.warn("[WebRTC] Closing old connection before accepting new one.");
             peerConnection.close();
+            window.movieStream = null; // Reset movie stream to prevent stale tracks
         }
         
         peerConnection = new RTCPeerConnection(configuration);
@@ -289,21 +287,34 @@ export async function init(roomId, videoElement, socket, username) {
         // Auto-Setup Transceivers based on Host Offer
         // (Rely purely on setRemoteDescription to map tracks accurately to avoid duplication holes.)
 
-        // Handle Incoming Stream
+        // Handle Incoming Stream (Discrete Routing)
         peerConnection.ontrack = event => {
             console.log("[WebRTC] Track received:", event.track.kind);
+            const transceiver = event.transceiver;
             
-            // [iOS Fix] Direct assignment works best with unified streams
-            if (event.streams && event.streams[0]) {
-                videoElement.srcObject = event.streams[0];
+            // Movie Component (Video or System Audio is always recvonly locally)
+            if (event.track.kind === 'video' || transceiver.direction === 'recvonly' || transceiver.currentDirection === 'recvonly') {
+                if (!window.movieStream) {
+                    window.movieStream = new MediaStream();
+                    videoElement.srcObject = window.movieStream;
+                }
+                window.movieStream.addTrack(event.track);
                 
-                // Promise handling for play() to catch Autoplay errors
                 const playPromise = videoElement.play();
                 if (playPromise !== undefined) {
-                    playPromise.catch(error => {
-                        console.log("[Player] Autoplay prevented. Waiting for interaction.", error);
-                    });
+                    playPromise.catch(error => console.log("[Player] Autoplay prevented.", error));
                 }
+            } 
+            // Voice Component (Bi-directional Host Chat is sendrecv locally)
+            else if (event.track.kind === 'audio') {
+                console.log("[Audio] Setting up pure Native AEC for Host Voice...");
+                const voicePlayer = new Audio();
+                voicePlayer.id = `hostVoice_${hostId}`;
+                voicePlayer.autoplay = true;
+                
+                // [NATIVE AEC FIX] Force browser OS-level Echo Cancellation by appending to DOM
+                document.body.appendChild(voicePlayer);
+                voicePlayer.srcObject = new MediaStream([event.track]);
             }
         };
 
@@ -355,7 +366,7 @@ export async function init(roomId, videoElement, socket, username) {
     socket.off("broadcaster");
     socket.on("broadcaster", () => {
         console.log("[Signal] Broadcaster is ready. Requesting stream...");
-        socket.emit("watcher"); 
+        socket.emit("watcher", username); 
     });
     
     // 6. Host Disconnect Guard

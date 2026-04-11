@@ -36,140 +36,59 @@ let localStream = null;      // Raw capture from screen
 let combinedStream = null;   // The final "Mixed" stream sent to peers
 let micStream = null;        // Raw capture from microphone
 
-// Audio Engine (The Core Fix)
-let audioContext = null; 
-let audioDestination = null; // The final mix output
-let systemSource = null;     // Screen Audio Input
-let micSource = null;        // Mic Audio Input
-let mainGainNode = null;     // Incoming Viewer Audio Booster
+// Audio Engine (Premium Domain Native AEC)
+let systemAudioTrack = null; 
+let hostMicTrack = null;
 
 /**
  * Initializes the Broadcaster Logic.
  */
 export async function init(roomId, videoElement, socket) {
-    console.log("Initializing Pro Broadcaster (Universal Mode)...");
+    console.log("Initializing Pro Broadcaster (Premium AEC Mode)...");
 
     // [UI] Initialize the Audience Widget
     createAudienceWidget();
-
-    // [COMPATIBILITY] Universal Host Enabled
-    // iOS and macOS fallbacks are handled dynamically during media capture.
 
     // [EARLY JOIN] Join room immediately to receive chats before answering screen capture prompts
     socket.emit("join-room", roomId, "broadcaster");
 
     try {
-        // ==========================================
-        // 2. SETUP AUDIO CONTEXT (The Mixer)
-        // ==========================================
-        const AudioContext = window.AudioContext || window.webkitAudioContext;
-        audioContext = new AudioContext();
-        audioDestination = audioContext.createMediaStreamDestination();
-        
-        // Hardware AEC Fix: Reroute mixer output through a standard HTML tag so Chrome can apply echo cancellation
-        const aecDestination = audioContext.createMediaStreamDestination();
-        
-        mainGainNode = audioContext.createGain();
-        mainGainNode.gain.value = 1.5; // Boost volume by 50% for viewers
-        mainGainNode.connect(aecDestination);
-        
-        const aecSpeaker = new Audio();
-        aecSpeaker.srcObject = aecDestination.stream;
-        aecSpeaker.autoplay = true;
-
-        // --- NEW: SPATIAL AUDIO (VIRTUAL COUCH) ---
-        let isSpatialAudioEnabled = true;
-        const hostPanner = audioContext.createStereoPanner();
-        hostPanner.pan.value = -0.4;
-        const viewerPanner = audioContext.createStereoPanner();
-        viewerPanner.pan.value = 0.4;
-
-        window.toggleSpatialAudio = () => {
-            isSpatialAudioEnabled = !isSpatialAudioEnabled;
-            const targetPan = isSpatialAudioEnabled ? 0.4 : 0.0;
-            hostPanner.pan.setTargetAtTime(-targetPan, audioContext.currentTime, 0.1);
-            viewerPanner.pan.setTargetAtTime(targetPan, audioContext.currentTime, 0.1);
-            return isSpatialAudioEnabled;
-        };
-
-        // --- NEW: VOICE DUCKING ARCHITECTURE ---
-        const systemAudioGain = audioContext.createGain();
-        systemAudioGain.connect(audioDestination);
-        
-        const voiceAnalyser = audioContext.createAnalyser();
-        voiceAnalyser.fftSize = 256;
-        const voiceDataArray = new Uint8Array(voiceAnalyser.frequencyBinCount);
-        
-        function duckingLoop() {
-            voiceAnalyser.getByteFrequencyData(voiceDataArray);
-            let sum = 0;
-            for(let i=0; i<voiceDataArray.length; i++) sum += voiceDataArray[i];
-            let average = sum / voiceDataArray.length;
-            
-            // If someone talks (avg amplitude > 15), crush movie volume by 70%.
-            if (average > 15) { 
-                systemAudioGain.gain.setTargetAtTime(0.3, audioContext.currentTime, 0.1); 
-            } else {
-                systemAudioGain.gain.setTargetAtTime(1.0, audioContext.currentTime, 0.8);
-            }
-            requestAnimationFrame(duckingLoop);
-        }
-        duckingLoop();
-
-        // Auto-Resume Audio Context (Fix for Chrome Autoplay Policy)
-        const resumeAudio = () => {
-            if (audioContext.state === 'suspended') {
-                audioContext.resume().then(() => console.log("[Audio] Engine Resumed"));
-            }
-        };
-        document.body.addEventListener('click', resumeAudio);
-        document.body.addEventListener('touchstart', resumeAudio);
 
         // ==========================================
-        // 3. CAPTURE MEDIA (Screen + System Audio)
+        // 2. CAPTURE MEDIA (Universal Compatibility Flow)
         // ==========================================
         console.log("Requesting Broadcast Media...");
         
-        let displayMediaConstraints = {
-            video: {
-                height: { ideal: 1080 },
-                frameRate: { ideal: 60 },
-                cursor: "always",
-                displaySurface: "monitor"
-            },
-            audio: {
-                autoGainControl: false,  
-                echoCancellation: false, 
-                noiseSuppression: false,
-                channelCount: 2          
-            }
-        };
-
         try {
-            // Attempt 1: Screen + System Audio (Works on Windows/some Android)
-            localStream = await navigator.mediaDevices.getDisplayMedia(displayMediaConstraints);
+            // Attempt 1: Strict High Quality desktop capture
+            localStream = await navigator.mediaDevices.getDisplayMedia({
+                video: { height: { ideal: 1080 }, frameRate: { ideal: 60 } },
+                audio: { autoGainControl: false, echoCancellation: false, noiseSuppression: false }
+            });
         } catch (err) {
-            console.log("[Media] Failed to get Display Media with Audio, falling back...", err);
-            
-            // Attempt 2: Screen without Audio (Often required on macOS / Android)
+            console.log("[Media] Strict bounds failed, trying generic...", err);
             try {
-                displayMediaConstraints.audio = false;
-                localStream = await navigator.mediaDevices.getDisplayMedia(displayMediaConstraints);
-            } catch (fallbackErr) {
-                console.log("[Media] Display Media completely blocked or unsupported. Falling back to Camera...", fallbackErr);
-                
-                // Attempt 3: Front Camera (Required on iPhones/iPads/Mobile Safari)
+                // Attempt 2: Generic capture (MacOS / Android / iOS Safari)
+                localStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+            } catch (err2) {
+                console.log("[Media] Generic Audio blocked, trying Video only...", err2);
                 try {
-                    localStream = await navigator.mediaDevices.getUserMedia({
-                        video: { facingMode: 'user', height: { ideal: 1080 } },
-                        audio: false // Force host to use the UI Mic Toggle for consistency
-                    });
-                    alert("Screen sharing not supported or granted. Defaulting to Camera.");
-                } catch (finalErr) {
-                    console.error("Critical Media Block:", finalErr);
-                    alert("Unable to access Camera or Screen. Please check permissions.");
-                    window.location.href = "/";
-                    return;
+                    // Attempt 3: Pure video fallback (iOS heavily restricts audio sometimes)
+                    localStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+                } catch (fallbackErr) {
+                    console.log("[Media] Display Media blocked. Falling back to Camera...", fallbackErr);
+                    try {
+                        localStream = await navigator.mediaDevices.getUserMedia({
+                            video: { facingMode: 'user', height: { ideal: 1080 } },
+                            audio: false 
+                        });
+                        alert("Screen sharing prevented by OS constraints. Defaulting to Camera.");
+                    } catch (finalErr) {
+                        console.error("Critical Media Block:", finalErr);
+                        alert("Unable to access Camera or Screen. Please check permissions.");
+                        window.location.href = "/";
+                        return;
+                    }
                 }
             }
         }
@@ -177,36 +96,30 @@ export async function init(roomId, videoElement, socket) {
         // ==========================================
         // 4. STREAM UNIFICATION (Merge Video + Mixed Audio)
         // ==========================================
-        combinedStream = new MediaStream();
-
-        // A. Add Video Track
+        // 3. TRACK SEGREGATION
+        // ==========================================
         const videoTrack = localStream.getVideoTracks()[0];
         if (videoTrack) {
             if ('contentHint' in videoTrack) videoTrack.contentHint = 'motion';
-            combinedStream.addTrack(videoTrack);
-
             videoTrack.onended = () => {
                 alert("Broadcast ended via system controls.");
                 window.location.reload();
             };
         }
 
-        // B. Route System Audio to Mixer
-        const systemAudioTrack = localStream.getAudioTracks()[0];
+        systemAudioTrack = localStream.getAudioTracks()[0] || null;
         if (systemAudioTrack) {
-            console.log("[Audio] System Audio Detected: Routing to Mixer...");
-            systemSource = audioContext.createMediaStreamSource(localStream);
-            systemSource.connect(systemAudioGain); // Route through Ducking Control
+            console.log("[Audio] System Audio Detected: Added to discrete Transceiver pipeline.");
         } else {
-            console.warn("[Audio] No System Audio detected. Ensure 'Share Audio' was checked.");
+            console.warn("[Audio] No System Audio detected. Ensure 'Share Audio' was checked, or you are using Camera fallback.");
         }
 
-        // C. Add Mixed Audio Track to Combined Stream
-        const mixedTrack = audioDestination.stream.getAudioTracks()[0];
-        if (mixedTrack) combinedStream.addTrack(mixedTrack);
-
         // Preview setup
-        console.log("Combined Stream Ready:", combinedStream.id);
+        combinedStream = new MediaStream();
+        if(videoTrack) combinedStream.addTrack(videoTrack);
+        if(systemAudioTrack) combinedStream.addTrack(systemAudioTrack);
+        
+        console.log("Local Stream Ready for Preview");
         videoElement.srcObject = combinedStream;
         videoElement.muted = true; // Local mute to prevent echo
 
@@ -216,25 +129,38 @@ export async function init(roomId, videoElement, socket) {
         socket.emit("broadcaster", roomId);
 
         // ==========================================
-        // 6. HOST MICROPHONE LOGIC (Live Mixing)
+        // 5. HOST MICROPHONE LOGIC (Discrete Track)
         // ==========================================
         window.toggleHostMic = async (shouldEnable) => {
             try {
                 if (shouldEnable) {
                     console.log("[Mic] Activating Host Mic...");
                     micStream = await navigator.mediaDevices.getUserMedia({ 
-                        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } 
+                        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } 
                     });
-                    
-                    micSource = audioContext.createMediaStreamSource(micStream);
-                    micSource.connect(hostPanner);
-                    hostPanner.connect(audioDestination);
-                    micSource.connect(voiceAnalyser); // Trigger Audio Ducking
+                    hostMicTrack = micStream.getAudioTracks()[0];
+
+                    // Inject into existing active connections dynamically
+                    Object.values(peerConnections).forEach(pc => {
+                        const voiceTransceiver = pc.getTransceivers().find(t => t.direction === 'sendrecv' || t.direction === 'recvonly');
+                        if (voiceTransceiver && voiceTransceiver.sender) {
+                            voiceTransceiver.sender.replaceTrack(hostMicTrack);
+                        }
+                    });
                     return true;
                 } else {
                     console.log("[Mic] Deactivating Host Mic...");
-                    if (micSource) { micSource.disconnect(); micSource = null; }
-                    if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+                    if (hostMicTrack) {
+                        hostMicTrack.stop();
+                        hostMicTrack = null;
+                        Object.values(peerConnections).forEach(pc => {
+                            const voiceTransceiver = pc.getTransceivers().find(t => t.direction === 'sendrecv' || t.direction === 'recvonly');
+                            if (voiceTransceiver && voiceTransceiver.sender) {
+                                voiceTransceiver.sender.replaceTrack(null);
+                            }
+                        });
+                    }
+                    if (micStream) micStream = null;
                     return true; 
                 }
             } catch (e) {
@@ -256,41 +182,43 @@ export async function init(roomId, videoElement, socket) {
             const peerConnection = new RTCPeerConnection(configuration);
             peerConnections[id] = peerConnection;
 
-            // A. Add Tracks with Encodings (Fixes Lag / Bitrate Crash)
-            combinedStream.getTracks().forEach(track => {
-                if (track.kind === 'video') {
-                    peerConnection.addTransceiver(track, {
-                        streams: [combinedStream],
-                        direction: 'sendonly',
-                        sendEncodings: [
-                            { maxBitrate: 4000000 } // Default to HD
-                        ]
-                    });
-                } else if (track.kind === 'audio') {
-                    // Critical Fix: Bind existing audio track as `sendrecv` so Viewer can respond!
-                    peerConnection.addTransceiver(track, {
-                        streams: [combinedStream],
-                        direction: 'sendrecv'
-                    });
-                }
-            });
+            // --- A. ISOLATED TRANSCEIVERS ---
+            // 1. Movie Video (sendonly)
+            if (videoTrack) {
+                peerConnection.addTransceiver(videoTrack, {
+                    direction: 'sendonly',
+                    sendEncodings: [{ maxBitrate: 4000000 }] // Default to HD
+                });
+            }
 
-            // Prevent duplicate transceivers
-            // B. (Removed extra audio transceiver injection)
+            // 2. Movie System Audio (sendonly)
+            if (systemAudioTrack) {
+                peerConnection.addTransceiver(systemAudioTrack, {
+                    direction: 'sendonly'
+                });
+            }
 
-            // C. Handle Incoming Viewer Audio (Voice Call)
+            // 3. Voice Call Transceiver (sendrecv)
+            if (hostMicTrack) {
+                peerConnection.addTransceiver(hostMicTrack, { direction: 'sendrecv' });
+            } else {
+                peerConnection.addTransceiver('audio', { direction: 'sendrecv' }); 
+            }
+
+            // C. Native AEC Playout for Viewer Audio
             peerConnection.ontrack = (event) => {
-                if (event.streams && event.streams[0]) {
+                const track = event.track;
+                if (track.kind === 'audio') {
                     console.log(`[Audio] Receiving voice from Viewer ${id}`);
-                    try {
-                        const source = audioContext.createMediaStreamSource(event.streams[0]);
-                        source.connect(viewerPanner);
-                        viewerPanner.connect(mainGainNode); // Add to A.E.C. protected mixer
-                        source.connect(voiceAnalyser); // Trigger Audio Ducking
-                        
-                    } catch(err) {
-                        console.error("Audio Mixing Error:", err);
-                    }
+                    const viewerVoicePlayer = new Audio();
+                    viewerVoicePlayer.id = `voice_${id}`;
+                    viewerVoicePlayer.autoplay = true;
+                    // Native AEC requirement: MUST append to DOM
+                    document.body.appendChild(viewerVoicePlayer);
+                    viewerVoicePlayer.srcObject = new MediaStream([track]);
+                    
+                    // Native HTML5 Video Ducking
+                    setupNativeDucking(track, document.getElementById('mainVideo'));
                 }
             };
 
@@ -422,6 +350,42 @@ function enhanceSDP(sdp) {
         newSdp = newSdp.replace("a=rtpmap:111 opus/48000/2\r\n", "a=rtpmap:111 opus/48000/2\r\na=fmtp:111 stereo=1; maxaveragebitrate=128000\r\n");
     }
     return newSdp;
+}
+
+/**
+ * Native Ducking using pure HTML5 Media Elements
+ * Allows analyzing Voice without routing it through AudioContext's destination
+ */
+function setupNativeDucking(audioTrack, videoEl) {
+    if (!videoEl) return;
+    try {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const duckCtx = new AudioContext();
+        const stream = new MediaStream([audioTrack]);
+        const source = duckCtx.createMediaStreamSource(stream);
+        const analyser = duckCtx.createAnalyser();
+        analyser.fftSize = 256;
+        source.connect(analyser); // We DO NOT connect to destination!
+        
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        function checkDucking() {
+            analyser.getByteFrequencyData(dataArray);
+            let sum = 0;
+            for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+            let avg = sum / dataArray.length;
+            
+            // Only lower volume if someone is speaking
+            if (avg > 15) {
+                videoEl.volume = 0.3; // Duck host's own local preview playback
+            } else {
+                videoEl.volume = 1.0;
+            }
+            requestAnimationFrame(checkDucking);
+        }
+        checkDucking();
+    } catch (e) {
+        console.warn("Could not start ducking logic:", e);
+    }
 }
 
 // ==========================================

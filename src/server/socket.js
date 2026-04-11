@@ -38,10 +38,10 @@ module.exports = (io) => {
         });
 
         // 3. Late Viewer / Reconnect Request
-        socket.on("watcher", () => {
+        socket.on("watcher", (username) => {
             const roomId = Array.from(socket.rooms).find(r => r !== socket.id);
             if (roomId) {
-                socket.to(roomId).emit("watcher", socket.id);
+                socket.to(roomId).emit("watcher", socket.id, username);
             }
         });
 
