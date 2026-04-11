@@ -7,9 +7,18 @@ module.exports = (io) => {
         // ===================================
         // 1. CONNECTION & ROOM LOGIC
         // ===================================
-        socket.on("join-room", (roomId, role) => {
+        socket.on("check-room", (roomId, callback) => {
+            const room = io.sockets.adapter.rooms.get(roomId);
+            if (room && room.size > 0) {
+                callback(true); // Host exists
+            } else {
+                callback(false); // Room empty
+            }
+        });
+
+        socket.on("join-room", (roomId, role, username) => {
             socket.join(roomId);
-            console.log(`User ${socket.id} joined room: ${roomId} as ${role}`);
+            console.log(`User ${socket.id} joined room: ${roomId} as ${role} (${username || 'Unknown'})`);
             
             // [NEW] Send existing chat history to the NEW user only
             // This ensures they see what happened before they joined.
@@ -19,7 +28,7 @@ module.exports = (io) => {
 
             // Notify others if a viewer joined
             if (role === 'viewer') {
-                socket.to(roomId).emit("watcher", socket.id);
+                socket.to(roomId).emit("watcher", socket.id, username);
             }
         });
 
@@ -41,8 +50,18 @@ module.exports = (io) => {
             if (roomId) {
                 socket.to(roomId).emit("disconnectPeer", socket.id);
                 
-                // [Optional] We could clear history here if the room is empty, 
-                // but usually, we keep it for a bit in case of a page refresh.
+                // [FIX] Memory Management: Clean up chat history if room is empty
+                const room = io.sockets.adapter.rooms.get(roomId);
+                if (room && room.size <= 1) { 
+                    // Give a 15-second grace period for page refreshes
+                    setTimeout(() => {
+                        const updatedRoom = io.sockets.adapter.rooms.get(roomId);
+                        if (!updatedRoom || updatedRoom.size === 0) {
+                            delete chatHistory[roomId];
+                            console.log(`[Memory] Cleaned up chat history for empty room: ${roomId}`);
+                        }
+                    }, 15000); 
+                }
             }
         });
 
@@ -65,6 +84,8 @@ module.exports = (io) => {
         // 5. CHAT FEATURE (With History)
         // ===================================
         socket.on("chat-message", (roomId, payload) => {
+            if (!roomId || !payload) return; // Prevent crashes from malformed payloads
+
             // A. Initialize room history if needed
             if (!chatHistory[roomId]) {
                 chatHistory[roomId] = [];
@@ -88,6 +109,17 @@ module.exports = (io) => {
         // ===================================
         socket.on("reaction", (roomId, emoji) => {
             io.to(roomId).emit("reaction", emoji);
+        });
+
+        // ===================================
+        // 7. WEBRTC OVERLAYS (Sync & Laser)
+        // ===================================
+        socket.on("laser", (roomId, data) => {
+            socket.to(roomId).emit("laser", data);
+        });
+
+        socket.on("sync-play", (roomId) => {
+            socket.to(roomId).emit("sync-play"); 
         });
 
         // ===================================

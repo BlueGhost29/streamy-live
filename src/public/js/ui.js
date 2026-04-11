@@ -3,35 +3,30 @@
 // ==========================================
 
 export function toggleFullScreen(wrapper) {
-    // 1. Check if we are currently in fullscreen
-    const isFullscreen = document.fullscreenElement || document.webkitFullscreenElement;
+    const isFullscreen = document.fullscreenElement || 
+                         document.webkitFullscreenElement || 
+                         document.msFullscreenElement;
 
     if (!isFullscreen) {
-        // --- ENTER FULLSCREEN ---
-        
-        // A. Standard Fullscreen (Android, Windows, Mac Chrome, Desktop)
-        // We try to make the *Wrapper* fullscreen so custom controls stay visible.
         if (wrapper.requestFullscreen) {
             wrapper.requestFullscreen().catch(err => {
                 console.warn("Standard fullscreen denied, trying fallback...", err);
                 tryVideoFallback(wrapper);
             });
-        } 
-        else if (wrapper.webkitRequestFullscreen) {
+        } else if (wrapper.webkitRequestFullscreen) {
             wrapper.webkitRequestFullscreen();
-        } 
-        // B. iOS / iPad Fallback (The Critical Fix)
-        // iOS Safari does NOT support 'requestFullscreen' on divs.
-        // We must find the <video> tag and use 'webkitEnterFullscreen'.
-        else {
+        } else if (wrapper.msRequestFullscreen) {
+            wrapper.msRequestFullscreen();
+        } else {
             tryVideoFallback(wrapper);
         }
     } else {
-        // --- EXIT FULLSCREEN ---
         if (document.exitFullscreen) {
             document.exitFullscreen();
         } else if (document.webkitExitFullscreen) {
             document.webkitExitFullscreen();
+        } else if (document.msExitFullscreen) {
+            document.msExitFullscreen();
         }
     }
 }
@@ -41,11 +36,13 @@ function tryVideoFallback(wrapper) {
     const video = wrapper.querySelector('video');
     if (video) {
         if (video.webkitEnterFullscreen) {
-            // iPad/iPhone specific command
             video.webkitEnterFullscreen(); 
         } else if (video.requestFullscreen) {
-            // Some older Androids prefer direct video fullscreen
             video.requestFullscreen();
+        } else if (video.webkitRequestFullscreen) {
+            video.webkitRequestFullscreen();
+        } else if (video.msRequestFullscreen) {
+            video.msRequestFullscreen();
         }
     }
 }

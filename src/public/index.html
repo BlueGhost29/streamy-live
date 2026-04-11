@@ -9,57 +9,62 @@
     
     <link rel="manifest" href="/manifest.json">
     <link rel="apple-touch-icon" href="/assets/icons/icon.png">
-
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
+    
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="theme-color" content="#0f172a">
+    <meta name="theme-color" content="#4c0519">
 </head>
 
-<body class="flex items-center justify-center h-screen text-white bg-slate-900 overflow-hidden">
-
-    <div class="absolute inset-0 z-0">
-        <div class="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-600/20 rounded-full blur-3xl animate-pulse"></div>
-        <div class="absolute bottom-1/4 right-1/4 w-96 h-96 bg-purple-600/20 rounded-full blur-3xl animate-pulse" style="animation-delay: 1s;"></div>
+<body class="flex items-center justify-center h-screen text-white bg-[#1a050f] overflow-hidden antialiased" style="font-family: 'Inter', sans-serif;">
+    
+    <!-- Fine-Arts Bokeh Background -->
+    <div class="absolute inset-0 z-0 overflow-hidden">
+        <div class="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-rose-900/40 rounded-full blur-[100px] animate-pulse" style="animation-duration: 8s;"></div>
+        <div class="absolute bottom-[-20%] right-[-10%] w-[600px] h-[600px] bg-red-950/60 rounded-full blur-[120px] animate-pulse" style="animation-duration: 12s; animation-delay: 2s;"></div>
+        <div class="absolute top-[30%] left-[60%] w-[300px] h-[300px] bg-pink-900/20 rounded-full blur-[80px] animate-pulse" style="animation-duration: 10s; animation-delay: 4s;"></div>
     </div>
 
-    <div class="relative z-10 max-w-md w-full p-8 bg-slate-800/80 backdrop-blur-xl rounded-2xl shadow-2xl border border-slate-700 text-center">
+    <!-- High-End Frosted Glass UI Card -->
+    <div class="relative z-10 max-w-md w-full mx-6 p-10 bg-white/[0.03] backdrop-blur-2xl rounded-3xl shadow-[0_8px_32px_0_rgba(0,0,0,0.3)] border border-white/[0.08] text-center transition-all duration-700 ease-out transform translate-y-0">
         
-        <h1 class="text-6xl font-black mb-2 tracking-tighter bg-clip-text text-transparent bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400">
-            Streamy
+        <h1 class="text-5xl font-bold mb-3 tracking-wide text-rose-100/90" style="font-family: 'Playfair Display', serif;">
+            Our Theater
         </h1>
-        <p class="text-slate-400 mb-8 font-medium">Lossless 60FPS Streaming</p>
+        <p class="text-rose-200/50 mb-10 font-light tracking-widest uppercase text-xs">An Intimate Cinematic Experience</p>
 
-        <div class="space-y-4">
+        <div class="space-y-6">
+            <!-- iPad Optimized Inputs (Large touch targets, elegant minimal borders) -->
+            <input type="text" id="usernameInput" placeholder="Enter your name..." 
+                class="w-full py-4 px-6 bg-black/20 border border-white/10 rounded-2xl focus:outline-none focus:border-rose-400/50 focus:bg-black/40 text-center text-lg placeholder-rose-100/20 transition-all font-light tracking-wide text-rose-50 shadow-inner">
             
-            <input type="text" id="usernameInput" placeholder="Enter Your Name" 
-                class="w-full py-3 px-6 bg-slate-900/50 border border-slate-600 rounded-xl focus:outline-none focus:border-purple-500 text-center text-lg placeholder-slate-500 transition-all">
+            <input type="text" id="roomInput" placeholder="Ticket code (Leave empty to generate)" 
+                class="w-full mt-6 py-4 px-6 bg-black/20 border border-white/10 rounded-2xl focus:outline-none focus:border-rose-400/50 focus:bg-black/40 text-center text-[15px] placeholder-rose-100/20 transition-all font-light tracking-widest text-rose-50 shadow-inner">
 
-            <button id="hostBtn" class="group w-full py-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 rounded-xl font-bold text-lg shadow-lg shadow-blue-900/40 transition-all transform hover:scale-[1.02]">
-                <span class="flex items-center justify-center gap-2">
-                    🚀 Start 4K Stream
+            <button id="openTheaterBtn" class="group w-full mt-4 py-5 bg-gradient-to-r from-rose-900/80 to-red-950/80 hover:from-rose-800 hover:to-rose-950 rounded-2xl text-rose-100 transition-all transform hover:scale-[1.01] border border-rose-400/20 hover:border-rose-300/40 shadow-lg shadow-rose-900/20">
+                <span class="flex items-center justify-center gap-3 text-[15px] font-medium tracking-widest uppercase" style="font-family: 'Inter', sans-serif;">
+                    <span class="text-xl">✨</span> Open the Theater
                 </span>
             </button>
             
-            <div class="relative group">
-                <input type="text" id="roomInput" placeholder="Paste Room Code" 
-                    class="w-full py-4 px-6 bg-slate-900/50 border border-slate-600 rounded-xl focus:outline-none focus:border-blue-500 focus:bg-slate-900 text-center text-lg placeholder-slate-500 transition-all font-mono">
-                
-                <button id="joinBtn" class="absolute right-2 top-2 bottom-2 aspect-square bg-slate-700 hover:bg-green-600 rounded-lg transition-colors flex items-center justify-center">
-                    ➔
-                </button>
-            </div>
-            
-            <p class="text-xs text-slate-500 mt-4">
-                <span class="inline-block w-2 h-2 rounded-full bg-green-500 mr-1"></span>
-                Azure Relay: Active (East Asia)
+            <p class="text-[10px] text-rose-200/30 mt-6 pt-4 border-t border-rose-900/30 tracking-widest uppercase flex items-center justify-center gap-2">
+                <span class="inline-block w-1.5 h-1.5 rounded-full bg-rose-500/80 shadow-[0_0_8px_rgba(244,63,94,0.8)]"></span>
+                Connection Secured
             </p>
+
+            <button id="ticketBtn" class="w-full mt-2 py-3 bg-white/[0.02] hover:bg-rose-900/30 rounded-2xl text-rose-300 transition-all font-light tracking-wider border border-white/[0.05] hover:border-rose-400/20 text-sm flex items-center justify-center gap-2">
+                🎟️ Download Theater Invite
+            </button>
         </div>
     </div>
 
     <script type="module">
         import { generateRoomId } from './js/ui.js';
+        import { io } from 'https://cdn.socket.io/4.7.5/socket.io.esm.min.js';
 
         // Helper to get name or default
         const getName = () => {
@@ -67,34 +72,103 @@
             return name || "Anonymous";
         };
 
-        // 1. Host Logic
-        document.getElementById('hostBtn').addEventListener('click', () => {
-            const roomId = generateRoomId();
+        const socket = io(); // Connect socket strictly for check-room logic
+
+        // 1. Single Intelligent Entry Logic
+        document.getElementById('openTheaterBtn').addEventListener('click', () => {
+            let code = document.getElementById('roomInput').value.trim();
             const name = getName();
-            // Pass name in URL
-            window.location.href = `/room.html?room=${roomId}&role=host&name=${encodeURIComponent(name)}`;
+            
+            if (!code) {
+                code = generateRoomId();
+            }
+
+            // Ask Server: Is there a broadcast in this room?
+            socket.emit("check-room", code, (hasHost) => {
+                if (hasHost) {
+                    window.location.href = `/room.html?room=${code}&role=viewer&name=${encodeURIComponent(name)}`;
+                } else {
+                    window.location.href = `/room.html?room=${code}&role=host&name=${encodeURIComponent(name)}`;
+                }
+            });
         });
 
-        // 2. Join Logic
-        function joinRoom() {
-            const input = document.getElementById('roomInput').value.trim();
-            if (!input) return;
-
-            let roomId = input;
-            try {
-                const url = new URL(input);
-                const code = url.searchParams.get("room");
-                if (code) roomId = code;
-            } catch (e) {}
-
-            const name = getName();
-            // Pass name in URL
-            window.location.href = `/room.html?room=${roomId}&role=viewer&name=${encodeURIComponent(name)}`;
-        }
-
-        document.getElementById('joinBtn').addEventListener('click', joinRoom);
         document.getElementById('roomInput').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') joinRoom();
+            if (e.key === 'Enter') document.getElementById('openTheaterBtn').click();
+        });
+
+        // 3. VIP Ticket Generator (Off-Screen Canvas)
+        document.getElementById('ticketBtn').addEventListener('click', () => {
+            let ticketCode = document.getElementById('roomInput').value.trim();
+            if (!ticketCode) {
+                ticketCode = generateRoomId();
+                document.getElementById('roomInput').value = ticketCode;
+            }
+            const nameInput = getName();
+
+            // Create High-Res Canvas
+            const canvas = document.createElement('canvas');
+            canvas.width = 800;
+            canvas.height = 300;
+            const ctx = canvas.getContext('2d');
+
+            // Draw Deep Rose/Gold Background Gradient
+            const grad = ctx.createLinearGradient(0, 0, 800, 300);
+            grad.addColorStop(0, '#1a050f');
+            grad.addColorStop(1, '#4c0519');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, 800, 300);
+
+            // Draw Elegant Golden Borders
+            ctx.strokeStyle = '#fde047'; // gold
+            ctx.lineWidth = 3;
+            ctx.strokeRect(15, 15, 770, 270);
+            ctx.strokeStyle = 'rgba(253, 224, 71, 0.2)';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(22, 22, 756, 256);
+
+            // Draw Ticket Rip Line
+            ctx.beginPath();
+            ctx.setLineDash([12, 12]);
+            ctx.moveTo(620, 15);
+            ctx.lineTo(620, 285);
+            ctx.strokeStyle = 'rgba(253, 224, 71, 0.4)';
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // Text Styles & Data
+            ctx.fillStyle = '#fde047';
+            ctx.font = 'bold 16px "Inter"';
+            ctx.fillText('ADMIT ONE  •  LIFETIME ACCESS', 45, 60);
+
+            ctx.fillStyle = '#ffe4e6';
+            ctx.font = 'bold 45px "Playfair Display"';
+            ctx.fillText('Our Private Theater', 45, 130);
+
+            ctx.fillStyle = '#fda4af';
+            ctx.font = 'italic 22px "Playfair Display"';
+            ctx.fillText(`Secured by: ${nameInput}`, 45, 175);
+
+            ctx.fillStyle = '#fde047';
+            ctx.font = 'bold 35px "Inter"';
+            ctx.fillText(`TICKET CODE: ${ticketCode}`, 45, 250);
+
+            // Side Stub
+            ctx.fillStyle = '#ffe4e6';
+            ctx.font = 'bold 36px "Playfair Display"';
+            ctx.fillText('DATE', 660, 140);
+            ctx.fillStyle = '#fde047';
+            ctx.font = '24px "Inter"';
+            ctx.fillText('NIGHT', 663, 175);
+
+            // Convert to Local Blob and Download
+            const dataUrl = canvas.toDataURL('image/png');
+            const a = document.createElement('a');
+            a.href = dataUrl;
+            a.download = `Theater_Invite_${ticketCode}.png`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
         });
     </script>
 </body>

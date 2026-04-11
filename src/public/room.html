@@ -8,8 +8,6 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="/css/style.css">
     
-    <script src="/socket.io/socket.io.js"></script>
-    
     <link rel="manifest" href="/manifest.json">
     <link rel="apple-touch-icon" href="/assets/icons/icon.png">
     
@@ -18,7 +16,7 @@
     <meta name="theme-color" content="#000000">
 </head>
 
-<body class="bg-black text-white h-screen w-screen overflow-hidden select-none font-sans">
+<body class="bg-red-950 text-white h-screen w-screen overflow-hidden select-none font-sans">
 
     <div id="ui-layer" class="absolute top-0 left-0 w-full z-50 p-6 flex justify-between items-start transition-transform duration-500 ease-in-out">
         
@@ -43,9 +41,9 @@
     </div>
 
     <div id="curtain" class="fixed inset-0 z-[60] bg-black flex flex-col items-center justify-center transition-opacity duration-700">
-        <div class="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-indigo-900/20 via-black to-black"></div>
+        <div class="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-rose-900/40 via-red-950 to-black"></div>
         
-        <button id="startViewerBtn" class="relative group active:scale-95 transition-transform duration-200">
+        <button id="startActionBtn" class="relative group active:scale-95 transition-transform duration-200">
             <div class="absolute -inset-1 bg-gradient-to-r from-blue-600 to-purple-600 rounded-full blur opacity-25 group-hover:opacity-75 transition duration-1000 group-hover:duration-200"></div>
             
             <div class="relative px-10 py-5 bg-black ring-1 ring-white/10 rounded-full flex items-center gap-4">
@@ -53,44 +51,83 @@
                 <span id="btnLabel" class="text-xl font-black tracking-tight text-white">INITIALIZING...</span>
             </div>
         </button>
-        <p class="mt-8 text-slate-600 text-xs font-mono uppercase tracking-widest animate-pulse">Secure Connection via Azure Relay</p>
+        <p class="mt-8 text-rose-300/60 text-xs font-mono uppercase tracking-widest animate-pulse">Intimate Watch Party Connection</p>
     </div>
 
-    <div id="video-wrapper">
-        <video id="mainVideo" playsinline autoplay class="w-full h-full object-contain max-h-screen max-w-screen shadow-2xl"></video>
+    <div id="video-wrapper" class="relative w-screen h-screen flex justify-center items-center bg-red-950/20 overflow-hidden">
+        <!-- AMBILIGHT CANVAS (Behind video) -->
+        <canvas id="ambilightCanvas" class="absolute inset-0 w-full h-full object-cover opacity-80 blur-[80px] saturate-200 z-0"></canvas>
         
-        <div id="controls" class="absolute bottom-8 left-1/2 -translate-x-1/2 glass-panel rounded-2xl px-6 py-3 flex items-center gap-6 transition-all duration-500 z-40 shadow-2xl backdrop-blur-xl">
+        <video id="mainVideo" playsinline autoplay class="relative w-full h-full object-contain max-h-screen max-w-screen shadow-2xl z-10"></video>
+        
+        <!-- LASER CANVAS (In front of video, pointer events active) -->
+        <canvas id="laserCanvas" class="absolute inset-0 w-full h-full z-20 cursor-crosshair touch-none"></canvas>
+        
+        <!-- THEATER SYNC OVERLAY -->
+        <div id="syncOverlay" class="fixed inset-0 z-[100] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center transition-all duration-[400ms] opacity-0 pointer-events-none scale-110">
+            <h1 id="syncText" class="text-[200px] font-black text-rose-50 tracking-widest drop-shadow-[0_0_80px_rgba(244,63,94,1)] animate-bounce" style="font-family: 'Playfair Display', serif;">3</h1>
+        </div>
+
+        <div id="controls" class="absolute bottom-8 left-1/2 -translate-x-1/2 glass-panel rounded-full px-8 py-4 flex items-center gap-6 transition-all duration-500 z-40 shadow-[0_10px_40px_rgba(225,29,72,0.2)] backdrop-blur-2xl border border-rose-900/40">
             
-            <button id="micBtn" class="group relative p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition-all hidden">
+            <button id="micBtn" class="group relative p-2 rounded-xl text-rose-300/60 hover:text-rose-100 hover:bg-rose-900/40 transition-all hidden">
                 <div class="flex flex-col items-center gap-1">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path></svg>
-                    <span id="micStatus" class="text-[9px] font-bold uppercase tracking-wider">Muted</span>
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path></svg>
+                    <span id="micStatus" class="text-[9px] font-medium tracking-widest uppercase">Muted</span>
                 </div>
             </button>
 
-            <div class="w-px h-8 bg-white/10 hidden md:block" id="controlSeparator"></div>
+            <div class="w-px h-8 bg-rose-900/30 hidden md:block" id="controlSeparator"></div>
 
-            <button id="chatToggleBtn" class="relative p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition-all">
+            <button id="chatToggleBtn" class="relative p-2 rounded-xl text-rose-300/80 hover:text-white hover:bg-rose-900/40 transition-all">
                 <div class="flex flex-col items-center gap-1">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path></svg>
-                    <span class="text-[9px] font-bold uppercase tracking-wider">Chat</span>
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"></path></svg>
+                    <span class="text-[9px] font-medium tracking-widest uppercase">Chat</span>
                 </div>
-                <span id="chatBadge" class="absolute top-1 right-1 w-2.5 h-2.5 bg-blue-500 rounded-full border-2 border-black hidden animate-pulse"></span>
+                <span id="chatBadge" class="absolute top-1 right-1 w-2 h-2 bg-rose-500 rounded-full border border-[var(--glass-bg)] hidden animate-pulse shadow-[0_0_8px_rgba(244,63,94,1)]"></span>
             </button>
 
-            <button id="qualityBtn" class="p-2 rounded-xl text-green-400 hover:text-green-300 hover:bg-white/10 transition-all hidden">
+            <button id="qualityBtn" class="p-2 rounded-xl text-emerald-400/80 hover:text-emerald-300 hover:bg-emerald-900/30 transition-all hidden">
                 <div class="flex flex-col items-center gap-1">
-                    <span class="text-lg font-black font-mono leading-none mt-1">HD</span>
-                    <span class="text-[9px] font-bold uppercase tracking-wider">Quality</span>
+                    <span class="text-lg font-bold font-mono leading-none mt-1">HD</span>
+                    <span class="text-[9px] font-medium tracking-widest uppercase">Quality</span>
                 </div>
             </button>
 
-            <div class="w-px h-8 bg-white/10 hidden md:block"></div>
-
-            <button id="fsBtn" class="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition-all">
+            <button id="nightBtn" class="p-2 rounded-xl text-indigo-300/80 hover:text-indigo-200 hover:bg-indigo-900/30 transition-all hidden">
                 <div class="flex flex-col items-center gap-1">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"></path></svg>
-                    <span class="text-[9px] font-bold uppercase tracking-wider">Full</span>
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path></svg>
+                    <span class="text-[9px] font-medium tracking-widest uppercase">Cozy</span>
+                </div>
+            </button>
+
+            <div class="w-px h-8 bg-rose-900/30 hidden md:block"></div>
+
+            <button id="spatialBtn" class="p-2 rounded-xl text-teal-400/80 hover:text-teal-300 hover:bg-teal-900/30 transition-all hidden">
+                <div class="flex flex-col items-center gap-1">
+                    <span class="text-[18px] leading-none mt-1">🎧</span>
+                    <span id="spatialStatus" class="text-[9px] font-medium tracking-widest uppercase">Spatial: ON</span>
+                </div>
+            </button>
+
+            <button id="pipBtn" class="p-2 rounded-xl text-rose-300/50 hover:text-rose-100 hover:bg-rose-900/40 transition-all hidden">
+                <div class="flex flex-col items-center gap-1">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2" ry="2" stroke-width="1.5"/><rect x="12" y="12" width="6" height="4" rx="1" stroke-width="1.5"/></svg>
+                    <span class="text-[9px] font-medium tracking-widest uppercase">PiP</span>
+                </div>
+            </button>
+
+            <button id="syncBtn" class="p-2 rounded-xl text-rose-400 hover:text-rose-200 hover:bg-rose-900/40 transition-all hidden">
+                <div class="flex flex-col items-center gap-1">
+                    <svg class="w-6 h-6 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    <span class="text-[9px] font-medium tracking-widest uppercase text-rose-300">Sync</span>
+                </div>
+            </button>
+
+            <button id="fsBtn" class="p-2 rounded-xl text-rose-300/60 hover:text-white hover:bg-rose-900/40 transition-all">
+                <div class="flex flex-col items-center gap-1">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"></path></svg>
+                    <span class="text-[9px] font-medium tracking-widest uppercase">Full</span>
                 </div>
             </button>
         </div>
@@ -103,10 +140,10 @@
         </div>
     </div>
 
-    <div id="chatPanel" class="fixed inset-y-0 right-0 w-80 glass-panel border-l border-white/10 transform translate-x-full transition-transform duration-300 ease-out z-[70] flex flex-col shadow-2xl">
-        <div class="flex items-center justify-between p-5 border-b border-white/10 bg-black/40 backdrop-blur-sm">
-            <h2 class="text-xs font-bold uppercase tracking-widest text-slate-300">Live Chat</h2>
-            <button id="closeChatBtn" class="p-2 text-slate-400 hover:text-white transition-colors hover:rotate-90 duration-300">
+    <div id="chatPanel" class="fixed inset-y-0 right-0 w-80 glass-panel border-l border-white/10 transform translate-x-full transition-transform duration-300 ease-out z-[70] flex flex-col shadow-2xl bg-rose-950/40">
+        <div class="flex items-center justify-between p-5 border-b border-white/10 bg-black/20 backdrop-blur-sm">
+            <h2 class="text-xs font-bold uppercase tracking-widest text-rose-300">Intimate Chat</h2>
+            <button id="closeChatBtn" class="p-2 text-rose-400 hover:text-white transition-colors hover:rotate-90 duration-300">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
             </button>
         </div>
@@ -114,17 +151,17 @@
         <div id="chatMessages" class="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin">
             <div class="text-center py-10 opacity-50">
                 <div class="w-12 h-12 bg-white/5 rounded-full mx-auto flex items-center justify-center mb-3">
-                    <span class="text-xl">👋</span>
+                    <span class="text-xl">🥂</span>
                 </div>
-                <p class="text-slate-400 text-xs">Welcome to the room!<br>Say hello to start.</p>
+                <p class="text-rose-300/70 text-xs">Welcome to the Private Watch-Party!<br>Say hello to start.</p>
             </div>
         </div>
 
-        <div class="p-4 bg-black/40 border-t border-white/10 backdrop-blur-md">
+        <div class="p-4 bg-black/20 border-t border-white/10 backdrop-blur-md">
             <form id="chatForm" class="flex gap-2">
-                <input type="text" id="chatInput" placeholder="Type a message..." autocomplete="off"
-                    class="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:bg-white/10 focus:border-blue-500 transition-all placeholder-slate-500">
-                <button type="submit" class="bg-blue-600 hover:bg-blue-500 text-white rounded-xl px-4 transition-colors shadow-lg shadow-blue-900/20">
+                <input type="text" id="chatInput" placeholder="Message your partner..." autocomplete="off"
+                    class="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:bg-white/10 focus:border-rose-500 transition-all placeholder-rose-300/50">
+                <button type="submit" id="chatSendBtn" class="bg-rose-600 hover:bg-rose-500 text-white rounded-xl px-4 transition-colors shadow-lg shadow-rose-900/20">
                     <svg class="w-5 h-5 transform rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path></svg>
                 </button>
             </form>
@@ -132,7 +169,7 @@
     </div>
 
     <script type="module">
-        import { toggleFullScreen } from './js/ui.js';
+        import { io } from 'https://cdn.socket.io/4.7.5/socket.io.esm.min.js';
         
         // --- 1. SETUP SHARED SOCKET ---
         const socket = io(); 
@@ -148,7 +185,7 @@
         const roomDisplay = document.getElementById('roomDisplay');
         const video = document.getElementById('mainVideo');
         const curtain = document.getElementById('curtain');
-        const startBtn = document.getElementById('startViewerBtn');
+        const startBtn = document.getElementById('startActionBtn');
         const btnLabel = document.getElementById('btnLabel');
         const btnIcon = document.getElementById('btnIcon'); // New ID
         const wrapper = document.getElementById('video-wrapper');
@@ -167,6 +204,13 @@
         const micBtn = document.getElementById('micBtn');
         const micStatus = document.getElementById('micStatus');
         const qualityBtn = document.getElementById('qualityBtn'); 
+        const nightBtn = document.getElementById('nightBtn');
+        const pipBtn = document.getElementById('pipBtn');
+        const spatialBtn = document.getElementById('spatialBtn');
+        const spatialStatus = document.getElementById('spatialStatus');
+        const syncBtn = document.getElementById('syncBtn');
+        const syncOverlay = document.getElementById('syncOverlay');
+        const syncText = document.getElementById('syncText');
         const sep = document.getElementById('controlSeparator'); // Ref for Host logic
 
         // Display Room Code
@@ -182,10 +226,23 @@
             setTimeout(() => roomDisplay.style.color = originalColor, 500);
         };
 
-        // Fullscreen Logic (Imported from ui.js)
+        // True Native OS Fullscreen Logic
+        const toggleTrueFullscreen = () => {
+            const el = document.documentElement; // Target ENTIRE tab
+            if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+                if (el.requestFullscreen) el.requestFullscreen();
+                else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+                else if (el.msRequestFullscreen) el.msRequestFullscreen();
+            } else {
+                if (document.exitFullscreen) document.exitFullscreen();
+                else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+                else if (document.msExitFullscreen) document.msExitFullscreen();
+            }
+        };
+
         document.getElementById('fsBtn').onclick = (e) => {
             e.stopPropagation();
-            toggleFullScreen(wrapper);
+            toggleTrueFullscreen();
         };
 
         // UI Auto-Hide Logic (Updated for new CSS classes)
@@ -246,8 +303,8 @@
             const div = document.createElement('div');
             div.className = `flex flex-col ${isMe ? 'items-end' : 'items-start'} animate-fade-in`;
             div.innerHTML = `
-                <div class="text-[10px] text-slate-400 mb-1 px-1 font-mono">${msg.user} • ${msg.time}</div>
-                <div class="${isMe ? 'bg-blue-600 text-white' : 'bg-white/10 text-slate-200'} rounded-2xl rounded-tr-sm px-4 py-2 max-w-[85%] text-sm leading-relaxed shadow-sm backdrop-blur-sm border border-white/5">
+                <div class="text-[10px] text-rose-300/70 mb-1 px-1 font-mono">${msg.user} • ${msg.time}</div>
+                <div class="${isMe ? 'bg-rose-600 text-white' : 'bg-white/10 text-rose-100'} rounded-2xl rounded-tr-sm px-4 py-2 max-w-[85%] text-sm leading-relaxed shadow-sm backdrop-blur-sm border border-white/5">
                     ${msg.text}
                 </div>
             `;
@@ -265,6 +322,19 @@
             }
         });
 
+        // Setup System Greeting (Zoom style)
+        socket.on('connect', () => {
+            if (!window.hasEmittedJoin && username) {
+                const payload = {
+                    user: "System",
+                    text: `👋 ${username} joined the stream.`,
+                    time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                };
+                socket.emit('chat-message', roomId, payload);
+                window.hasEmittedJoin = true;
+            }
+        });
+
         // Reaction Logic
         window.sendReaction = (emoji) => socket.emit('reaction', roomId, emoji);
         socket.on('reaction', (emoji) => {
@@ -277,11 +347,147 @@
             setTimeout(() => el.remove(), 2000);
         });
 
+        // --- AMBILIGHT LOGIC ---
+        const ambilightCanvas = document.getElementById('ambilightCanvas');
+        const ambCtx = ambilightCanvas.getContext('2d');
+        function loopAmbilight() {
+            if (!video.paused && !video.ended && video.readyState >= 2) {
+                ambCtx.drawImage(video, 0, 0, ambilightCanvas.width, ambilightCanvas.height);
+            }
+            requestAnimationFrame(loopAmbilight);
+        }
+        video.addEventListener('loadedmetadata', () => {
+            ambilightCanvas.width = video.videoWidth || 640;
+            ambilightCanvas.height = video.videoHeight || 360;
+        });
+        requestAnimationFrame(loopAmbilight);
+
+        // --- LASER POINTER LOGIC ---
+        const laserCanvas = document.getElementById('laserCanvas');
+        const laserCtx = laserCanvas.getContext('2d');
+        let isDrawing = false;
+        let lastLaserTime = 0; // [FIX] Track idle time
+        
+        
+        function resizeLaserCanvas() {
+            laserCanvas.width = window.innerWidth;
+            laserCanvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeLaserCanvas);
+        resizeLaserCanvas();
+
+        function drawLaser(x, y) {
+            laserCtx.font = "24px sans-serif";
+            laserCtx.shadowBlur = 15;
+            laserCtx.shadowColor = '#ff0055';
+            laserCtx.textAlign = "center";
+            laserCtx.textBaseline = "middle";
+            laserCtx.fillText("❤️", x, y);
+        }
+        
+        // Elegant trail fade
+        setInterval(() => {
+            if (Date.now() - lastLaserTime > 1500) {
+                // [FIX] Zeno's paradox prevention: Wipe lingering 1% alpha artifacts after 1.5s idle
+                laserCtx.clearRect(0, 0, laserCanvas.width, laserCanvas.height);
+            } else {
+                laserCtx.globalCompositeOperation = 'destination-out';
+                laserCtx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+                laserCtx.fillRect(0, 0, laserCanvas.width, laserCanvas.height);
+                laserCtx.globalCompositeOperation = 'source-over';
+            }
+        }, 30);
+
+        laserCanvas.addEventListener('pointerdown', (e) => { isDrawing = true; emitLaser(e); });
+        laserCanvas.addEventListener('pointermove', (e) => { if (isDrawing) emitLaser(e); });
+        laserCanvas.addEventListener('pointerup', () => isDrawing = false);
+        laserCanvas.addEventListener('pointerleave', () => isDrawing = false);
+        
+        function emitLaser(e) {
+            const rect = laserCanvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) / laserCanvas.width;
+            const y = (e.clientY - rect.top) / laserCanvas.height;
+            lastLaserTime = Date.now(); // Update Tracker
+            drawLaser(e.clientX - rect.left, e.clientY - rect.top);
+            socket.emit('laser', roomId, {x, y});
+        }
+        
+        socket.on('laser', (data) => {
+            const actualX = data.x * laserCanvas.width;
+            const actualY = data.y * laserCanvas.height;
+            lastLaserTime = Date.now(); // Update Tracker
+            drawLaser(actualX, actualY);
+        });
+
+        // --- PICTURE-IN-PICTURE (PiP) LOGIC ---
+        document.getElementById('pipBtn').onclick = async (e) => {
+            e.stopPropagation();
+            try {
+                if (document.pictureInPictureElement) {
+                    await document.exitPictureInPicture();
+                } else if (video.requestPictureInPicture) {
+                    await video.requestPictureInPicture();
+                } else {
+                    alert("PiP not supported directly on this browser version.");
+                }
+            } catch (err) {
+                console.error("PiP Error:", err);
+            }
+        };
+
+        // --- THEATER SYNC LOGIC ---
+        let isSyncing = false;
+        function runSyncSequence() {
+            if (isSyncing) return;
+            isSyncing = true;
+            syncOverlay.classList.remove('opacity-0', 'pointer-events-none', 'scale-110');
+            syncOverlay.classList.add('opacity-100', 'scale-100');
+            
+            let count = 3;
+            syncText.innerText = count;
+            
+            const interval = setInterval(() => {
+                count--;
+                if (count > 0) {
+                    syncText.innerText = count;
+                    syncText.classList.remove('animate-bounce');
+                    void syncText.offsetWidth;
+                    syncText.classList.add('animate-bounce');
+                } else {
+                    clearInterval(interval);
+                    syncText.innerText = "🍿 PLAY!";
+                    setTimeout(() => {
+                        syncOverlay.classList.remove('opacity-100', 'scale-100');
+                        syncOverlay.classList.add('opacity-0', 'pointer-events-none', 'scale-110');
+                        setTimeout(() => isSyncing = false, 400); // Allow fadeout before unlocking
+                    }, 1000);
+                }
+            }, 1000);
+        }
+
+        socket.on('sync-play', () => runSyncSequence());
+        syncBtn.onclick = (e) => {
+            e.stopPropagation();
+            socket.emit('sync-play', roomId);
+        };
+
         // --- 5. ROLE SPECIFIC LOGIC ---
         if (role === 'host') {
             btnLabel.innerText = "PREPARING STUDIO...";
             micBtn.classList.remove('hidden');
             if(sep) sep.classList.remove('hidden');
+            spatialBtn.classList.remove('hidden');
+            syncBtn.classList.remove('hidden');
+
+            spatialBtn.onclick = (e) => {
+                e.stopPropagation();
+                if (window.toggleSpatialAudio) {
+                    const isActive = window.toggleSpatialAudio();
+                    spatialStatus.innerText = `Spatial: ${isActive ? 'ON' : 'OFF'}`;
+                    spatialBtn.classList.toggle('text-emerald-400', isActive);
+                    spatialBtn.classList.toggle('text-slate-400', !isActive);
+                }
+            };
 
             let isHostMuted = true;
             micBtn.onclick = async () => {
@@ -297,11 +503,11 @@
                         // Visual Feedback for Mic State
                         if (!isHostMuted) {
                             // Active State (Red)
-                            micBtn.classList.add("text-red-400", "bg-red-500/10");
+                            micBtn.classList.add("text-red-400", "bg-red-500/20");
                             micBtn.classList.remove("text-slate-400");
                         } else {
                             // Muted State (Default)
-                            micBtn.classList.remove("text-red-400", "bg-red-500/10");
+                            micBtn.classList.remove("text-red-400", "bg-red-500/20");
                             micBtn.classList.add("text-slate-400");
                         }
                     }
@@ -333,6 +539,9 @@
             micBtn.classList.remove('hidden');
             if(sep) sep.classList.remove('hidden');
             qualityBtn.classList.remove('hidden');
+            nightBtn.classList.remove('hidden');
+            pipBtn.classList.remove('hidden');
+            syncBtn.classList.remove('hidden');
 
             import('./js/viewer.js').then(module => {
                 btnLabel.innerText = "JOIN MOVIE";
@@ -342,8 +551,8 @@
                     curtain.classList.add('opacity-0', 'pointer-events-none');
                     setTimeout(() => curtain.classList.add('hidden'), 700);
                     video.muted = false; 
-                    // [CRITICAL] Passing shared socket
-                    module.init(roomId, video, socket);
+                    // [CRITICAL] Passing shared socket and username
+                    module.init(roomId, video, socket, username);
                 };
             });
         }

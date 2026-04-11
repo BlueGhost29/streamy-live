@@ -52,13 +52,11 @@ export async function init(roomId, videoElement, socket) {
     // [UI] Initialize the Audience Widget
     createAudienceWidget();
 
-    // [COMPATIBILITY CHECK] iOS Hosting Block
-    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
-    if (isIOS) {
-        alert("HOSTING ERROR: iOS devices cannot share screen due to Apple restrictions. Please use a Laptop or Android to host.");
-        window.location.href = "/"; 
-        return;
-    }
+    // [COMPATIBILITY] Universal Host Enabled
+    // iOS and macOS fallbacks are handled dynamically during media capture.
+
+    // [EARLY JOIN] Join room immediately to receive chats before answering screen capture prompts
+    socket.emit("join-room", roomId, "broadcaster");
 
     try {
         // ==========================================
@@ -72,6 +70,45 @@ export async function init(roomId, videoElement, socket) {
         mainGainNode.gain.value = 1.5; // Boost volume by 50% for viewers
         mainGainNode.connect(audioContext.destination);
 
+        // --- NEW: SPATIAL AUDIO (VIRTUAL COUCH) ---
+        let isSpatialAudioEnabled = true;
+        const hostPanner = audioContext.createStereoPanner();
+        hostPanner.pan.value = -0.4;
+        const viewerPanner = audioContext.createStereoPanner();
+        viewerPanner.pan.value = 0.4;
+
+        window.toggleSpatialAudio = () => {
+            isSpatialAudioEnabled = !isSpatialAudioEnabled;
+            const targetPan = isSpatialAudioEnabled ? 0.4 : 0.0;
+            hostPanner.pan.setTargetAtTime(-targetPan, audioContext.currentTime, 0.1);
+            viewerPanner.pan.setTargetAtTime(targetPan, audioContext.currentTime, 0.1);
+            return isSpatialAudioEnabled;
+        };
+
+        // --- NEW: VOICE DUCKING ARCHITECTURE ---
+        const systemAudioGain = audioContext.createGain();
+        systemAudioGain.connect(audioDestination);
+        
+        const voiceAnalyser = audioContext.createAnalyser();
+        voiceAnalyser.fftSize = 256;
+        const voiceDataArray = new Uint8Array(voiceAnalyser.frequencyBinCount);
+        
+        function duckingLoop() {
+            voiceAnalyser.getByteFrequencyData(voiceDataArray);
+            let sum = 0;
+            for(let i=0; i<voiceDataArray.length; i++) sum += voiceDataArray[i];
+            let average = sum / voiceDataArray.length;
+            
+            // If someone talks (avg amplitude > 15), crush movie volume by 70%.
+            if (average > 15) { 
+                systemAudioGain.gain.setTargetAtTime(0.3, audioContext.currentTime, 0.1); 
+            } else {
+                systemAudioGain.gain.setTargetAtTime(1.0, audioContext.currentTime, 0.8);
+            }
+            requestAnimationFrame(duckingLoop);
+        }
+        duckingLoop();
+
         // Auto-Resume Audio Context (Fix for Chrome Autoplay Policy)
         const resumeAudio = () => {
             if (audioContext.state === 'suspended') {
@@ -84,8 +121,9 @@ export async function init(roomId, videoElement, socket) {
         // ==========================================
         // 3. CAPTURE MEDIA (Screen + System Audio)
         // ==========================================
-        console.log("Requesting Display Media...");
-        localStream = await navigator.mediaDevices.getDisplayMedia({
+        console.log("Requesting Broadcast Media...");
+        
+        let displayMediaConstraints = {
             video: {
                 height: { ideal: 1080 },
                 frameRate: { ideal: 60 },
@@ -98,7 +136,36 @@ export async function init(roomId, videoElement, socket) {
                 noiseSuppression: false,
                 channelCount: 2          
             }
-        });
+        };
+
+        try {
+            // Attempt 1: Screen + System Audio (Works on Windows/some Android)
+            localStream = await navigator.mediaDevices.getDisplayMedia(displayMediaConstraints);
+        } catch (err) {
+            console.log("[Media] Failed to get Display Media with Audio, falling back...", err);
+            
+            // Attempt 2: Screen without Audio (Often required on macOS / Android)
+            try {
+                displayMediaConstraints.audio = false;
+                localStream = await navigator.mediaDevices.getDisplayMedia(displayMediaConstraints);
+            } catch (fallbackErr) {
+                console.log("[Media] Display Media completely blocked or unsupported. Falling back to Camera...", fallbackErr);
+                
+                // Attempt 3: Front Camera (Required on iPhones/iPads/Mobile Safari)
+                try {
+                    localStream = await navigator.mediaDevices.getUserMedia({
+                        video: { facingMode: 'user', height: { ideal: 1080 } },
+                        audio: false // Force host to use the UI Mic Toggle for consistency
+                    });
+                    alert("Screen sharing not supported or granted. Defaulting to Camera.");
+                } catch (finalErr) {
+                    console.error("Critical Media Block:", finalErr);
+                    alert("Unable to access Camera or Screen. Please check permissions.");
+                    window.location.href = "/";
+                    return;
+                }
+            }
+        }
 
         // ==========================================
         // 4. STREAM UNIFICATION (Merge Video + Mixed Audio)
@@ -122,7 +189,7 @@ export async function init(roomId, videoElement, socket) {
         if (systemAudioTrack) {
             console.log("[Audio] System Audio Detected: Routing to Mixer...");
             systemSource = audioContext.createMediaStreamSource(localStream);
-            systemSource.connect(audioDestination); 
+            systemSource.connect(systemAudioGain); // Route through Ducking Control
         } else {
             console.warn("[Audio] No System Audio detected. Ensure 'Share Audio' was checked.");
         }
@@ -137,9 +204,8 @@ export async function init(roomId, videoElement, socket) {
         videoElement.muted = true; // Local mute to prevent echo
 
         // ==========================================
-        // 5. JOIN ROOM (Socket Operations)
+        // 5. SETUP SIGNALS
         // ==========================================
-        socket.emit("join-room", roomId, "broadcaster");
         socket.emit("broadcaster", roomId);
 
         // ==========================================
@@ -154,7 +220,9 @@ export async function init(roomId, videoElement, socket) {
                     });
                     
                     micSource = audioContext.createMediaStreamSource(micStream);
-                    micSource.connect(audioDestination);
+                    micSource.connect(hostPanner);
+                    hostPanner.connect(audioDestination);
+                    micSource.connect(voiceAnalyser); // Trigger Audio Ducking
                     return true;
                 } else {
                     console.log("[Mic] Deactivating Host Mic...");
@@ -172,18 +240,28 @@ export async function init(roomId, videoElement, socket) {
         // 7. VIEWER HANDLING & AUDIENCE TRACKING
         // ==========================================
         socket.off("watcher");
-        socket.on("watcher", async (id) => {
-            console.log("Connecting to Viewer:", id);
+        socket.on("watcher", async (id, username) => {
+            console.log("Connecting to Viewer:", id, username);
 
             // [UI] Add to Viewer List
-            updateAudienceList(id, "Connecting...", "orange");
+            updateAudienceList(id, "Connecting...", "orange", username);
             
             const peerConnection = new RTCPeerConnection(configuration);
             peerConnections[id] = peerConnection;
 
-            // A. Add Tracks
+            // A. Add Tracks with Encodings (Fixes Lag / Bitrate Crash)
             combinedStream.getTracks().forEach(track => {
-                peerConnection.addTrack(track, combinedStream);
+                if (track.kind === 'video') {
+                    peerConnection.addTransceiver(track, {
+                        streams: [combinedStream],
+                        direction: 'sendonly',
+                        sendEncodings: [
+                            { maxBitrate: 4000000 } // Default to HD upfront
+                        ]
+                    });
+                } else {
+                    peerConnection.addTrack(track, combinedStream);
+                }
             });
 
             // B. Prepare Audio Transceiver (Bidirectional)
@@ -195,7 +273,9 @@ export async function init(roomId, videoElement, socket) {
                     console.log(`[Audio] Receiving voice from Viewer ${id}`);
                     try {
                         const source = audioContext.createMediaStreamSource(event.streams[0]);
-                        source.connect(mainGainNode); // Add to mixer
+                        source.connect(viewerPanner);
+                        viewerPanner.connect(mainGainNode); // Add to mixer
+                        source.connect(voiceAnalyser); // Trigger Audio Ducking
                         
                         // Fallback Audio Element (just in case WebAudio fails)
                         const audio = new Audio();
@@ -232,9 +312,17 @@ export async function init(roomId, videoElement, socket) {
                 console.log(`Connection state with ${id}: ${state}`);
                 
                 // [UI] Update Status Dots
-                if (state === 'connected') updateAudienceList(id, "Online", "#22c55e"); // Green
-                if (state === 'disconnected') updateAudienceList(id, "Unstable", "#eab308"); // Yellow
-                if (state === 'failed' || state === 'closed') removeViewerFromList(id);
+                if (state === 'connected') updateAudienceList(id, "Online", "#22c55e", username); // Green
+                if (state === 'disconnected') updateAudienceList(id, "Unstable", "#eab308", username); // Yellow
+                
+                // [FIX] Garbage Collect Failed Connections
+                if (state === 'failed' || state === 'closed') {
+                    if (peerConnections[id]) {
+                        peerConnections[id].close();
+                        delete peerConnections[id];
+                    }
+                    removeViewerFromList(id);
+                }
             };
 
             // F. Create Offer
@@ -291,10 +379,10 @@ export async function init(roomId, videoElement, socket) {
             if (!params.encodings) params.encodings = [{}];
 
             if (quality === 'low') {
-                params.encodings[0].maxBitrate = 1000000; // 1 Mbps (SD)
-                params.encodings[0].scaleResolutionDownBy = 2.0; 
+                params.encodings[0].maxBitrate = 1500000; // 1.5 Mbps (SD)
+                params.encodings[0].scaleResolutionDownBy = 1.5; 
             } else {
-                params.encodings[0].maxBitrate = 8500000; // 8.5 Mbps (HD)
+                params.encodings[0].maxBitrate = 4000000; // 4 Mbps (HD)
                 params.encodings[0].scaleResolutionDownBy = 1.0; 
             }
 
@@ -321,7 +409,11 @@ export async function init(roomId, videoElement, socket) {
 function enhanceSDP(sdp) {
     let newSdp = sdp;
     if (newSdp.includes("a=mid:video")) {
-        newSdp = newSdp.replace(/a=mid:video\r\n/g, 'a=mid:video\r\nb=AS:8500\r\n');
+        newSdp = newSdp.replace(/a=mid:video\r\n/g, 'a=mid:video\r\nb=AS:4000\r\n');
+    }
+    // Optimize Voice (Opus) to pristine stereo quality
+    if (newSdp.includes("a=rtpmap:111 opus/48000/2")) {
+        newSdp = newSdp.replace("a=rtpmap:111 opus/48000/2\r\n", "a=rtpmap:111 opus/48000/2\r\na=fmtp:111 stereo=1; maxaveragebitrate=128000\r\n");
     }
     return newSdp;
 }
@@ -355,7 +447,7 @@ function createAudienceWidget() {
     document.body.appendChild(widget);
 }
 
-function updateAudienceList(id, status, color) {
+function updateAudienceList(id, status, color, username) {
     const list = document.getElementById('viewerList');
     const count = document.getElementById('viewerCount');
     const emptyState = document.getElementById('emptyState');
@@ -364,12 +456,17 @@ function updateAudienceList(id, status, color) {
     if (emptyState) emptyState.style.display = 'none';
 
     let item = document.getElementById(`v-${id}`);
-    const shortId = id.substr(0, 4).toUpperCase();
+    
+    let displayName = username;
+    if (!displayName || displayName === "Viewer") {
+        const shortId = id.substr(0, 4).toUpperCase();
+        displayName = `Guest ${shortId}`;
+    }
     
     const content = `
         <span style="display:flex; align-items:center;">
             <span style="width:8px; height:8px; border-radius:50%; background:${color}; margin-right:8px; box-shadow: 0 0 5px ${color};"></span>
-            Guest ${shortId}
+            ${displayName}
         </span>
         <span style="font-size:11px; color:#ccc;">${status}</span>
     `;

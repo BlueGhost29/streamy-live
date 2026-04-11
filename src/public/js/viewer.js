@@ -42,14 +42,16 @@ let wakeLock = null;
 let localAudioStream = null;
 let isMuted = true;
 let isHighQuality = true; // Default to HD
+let hostId = null; // Store the host's socket ID
 
 /**
  * Initializes the Viewer Logic.
  * @param {string} roomId - The unique room ID.
  * @param {HTMLVideoElement} videoElement - The main video player.
  * @param {object} socket - The shared Socket.io instance.
+ * @param {string} username - The provided viewer name.
  */
-export async function init(roomId, videoElement, socket) {
+export async function init(roomId, videoElement, socket, username) {
     console.log("Initializing Universal Viewer (Auto-Recover Mode)...");
     
     // ------------------------------------------
@@ -69,8 +71,7 @@ export async function init(roomId, videoElement, socket) {
     // 3. UI: Double Tap to Fullscreen (Mobile Friendly)
     if (videoElement.parentElement) {
         videoElement.parentElement.addEventListener("dblclick", () => {
-            console.log("Double tap detected: Toggling Fullscreen");
-            toggleFullScreen(videoElement.parentElement);
+            toggleFullScreen(document.documentElement); // Force root to hide all OS Taskbars
         });
     }
 
@@ -98,6 +99,61 @@ export async function init(roomId, videoElement, socket) {
             const mode = isHighQuality ? 'high' : 'low';
             console.log(`[Quality] Requesting bitrate change to: ${mode}`);
             socket.emit("bitrate_request", roomId, mode);
+        };
+    }
+
+    // ------------------------------------------
+    // B.5 NIGHT MODE LOGIC (DIALOGUE COMPRESSOR)
+    // ------------------------------------------
+    let nightModeActive = false;
+    let viewerAudioContext = null;
+    let viewerCompressor = null;
+    let viewerMediaSource = null;
+
+    const nightBtn = document.getElementById('nightBtn');
+    if (nightBtn) {
+        nightBtn.onclick = (e) => {
+            if(e) e.preventDefault();
+            nightModeActive = !nightModeActive;
+            
+            if (nightModeActive) {
+                nightBtn.classList.replace('text-indigo-400', 'text-white');
+                nightBtn.classList.add('bg-indigo-600/50', 'animate-pulse');
+                
+                if (!viewerAudioContext) viewerAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+                if (viewerAudioContext.state === 'suspended') viewerAudioContext.resume();
+                
+                if (!viewerMediaSource && videoElement.srcObject) {
+                    const audioTrack = videoElement.srcObject.getAudioTracks()[0];
+                    if (audioTrack) {
+                        const stream = new MediaStream([audioTrack]);
+                        viewerMediaSource = viewerAudioContext.createMediaStreamSource(stream);
+                        
+                        viewerCompressor = viewerAudioContext.createDynamicsCompressor();
+                        viewerCompressor.threshold.value = -40; // Catch everything
+                        viewerCompressor.knee.value = 30;
+                        viewerCompressor.ratio.value = 12; // Flatten loud noises intensely
+                        viewerCompressor.attack.value = 0.003;
+                        viewerCompressor.release.value = 0.25;
+                        
+                        viewerMediaSource.connect(viewerCompressor);
+                        viewerCompressor.connect(viewerAudioContext.destination);
+                        videoElement.muted = true; // Mute Raw Audio
+                        console.log("[Audio] Night Mode Activated");
+                    }
+                } else if (viewerMediaSource) {
+                    viewerMediaSource.connect(viewerCompressor);
+                    videoElement.muted = true;
+                }
+            } else {
+                nightBtn.classList.replace('text-white', 'text-indigo-400');
+                nightBtn.classList.remove('bg-indigo-600/50', 'animate-pulse');
+                if (viewerMediaSource && viewerCompressor) {
+                    viewerMediaSource.disconnect(viewerCompressor);
+                }
+                videoElement.muted = false; // Restore Raw Audio
+                console.log("[Audio] Night Mode Disabled");
+            }
         };
     }
 
@@ -137,11 +193,11 @@ export async function init(roomId, videoElement, socket) {
                     console.log("[Mic] Access Granted:", audioTrack.label);
                     
                     if (peerConnection) {
-                        const senders = peerConnection.getSenders();
-                        // Try to find an existing audio sender to replace
-                        // This avoids renegotiation (which causes blips/black screens)
-                        const audioSender = senders.find(s => s.track && s.track.kind === 'audio') 
-                                         || senders.find(s => s.track === null && s.dtlsTransport);
+                        // [PRODUCTION UPGRADE] Modern Transceiver Mapping
+                        // Safely locate the sender without relying on volatile dtlsTransport states
+                        const transceivers = peerConnection.getTransceivers();
+                        const audioTransceiver = transceivers.find(t => t.receiver && t.receiver.track && t.receiver.track.kind === 'audio');
+                        const audioSender = audioTransceiver ? audioTransceiver.sender : null;
 
                         if (audioSender) {
                             console.log("[Mic] Replacing existing silence track with Mic audio...");
@@ -176,11 +232,12 @@ export async function init(roomId, videoElement, socket) {
                     localAudioStream = null;
                 }
                 
-                // 2. Set sender track to null (sends digital silence)
+                // 2. Safely wipe the sender sequence (digital silence)
                 if (peerConnection) {
-                    const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'audio');
-                    if (sender) {
-                        sender.replaceTrack(null);
+                    const transceivers = peerConnection.getTransceivers();
+                    const audioTransceiver = transceivers.find(t => t.receiver && t.receiver.track && t.receiver.track.kind === 'audio');
+                    if (audioTransceiver && audioTransceiver.sender) {
+                        audioTransceiver.sender.replaceTrack(null);
                     }
                 }
 
@@ -197,21 +254,22 @@ export async function init(roomId, videoElement, socket) {
     // D. SOCKET & WEBRTC LOGIC
     // ------------------------------------------
     
-    // 1. Join Room
-    console.log(`[Socket] Joining room: ${roomId}`);
-    socket.emit("join-room", roomId, "viewer");
+    // 1. Join Room (sending username to appear in Audience List)
+    console.log(`[Socket] Joining room: ${roomId} as ${username}`);
+    socket.emit("join-room", roomId, "viewer", username);
 
     // 2. Robust Auto-Rejoin
     // If 4G drops and reconnects, this ensures we don't get stuck in limbo
     socket.on("connect", () => {
         console.log("[Socket] Reconnected! Rejoining room...");
-        socket.emit("join-room", roomId, "viewer");
+        socket.emit("join-room", roomId, "viewer", username);
     });
 
     // 3. Handle WebRTC Offer
     socket.off("offer");
     socket.on("offer", async (id, description) => {
-        console.log("[WebRTC] Received Offer from Host");
+        console.log("[WebRTC] Received Offer from Host:", id);
+        hostId = id; // Store the Host ID to uniquely identify them
         
         // Safety: Close existing connection if any
         if (peerConnection) {
@@ -257,8 +315,14 @@ export async function init(roomId, videoElement, socket) {
         peerConnection.oniceconnectionstatechange = () => {
             const state = peerConnection.iceConnectionState;
             console.log(`[ICE] Connection State: ${state}`);
-            if (state === 'disconnected') console.warn("Stream unstable...");
-            if (state === 'failed') console.error("Stream failed to connect.");
+            if (state === 'disconnected') {
+                console.warn("Stream unstable...");
+            }
+            if (state === 'failed' || state === 'closed') {
+                console.error("Stream failed to connect.");
+                alert("Connection lost. Reloading to attempt auto-recovery.");
+                window.location.reload();
+            }
         };
 
         // Process the Offer
@@ -290,12 +354,16 @@ export async function init(roomId, videoElement, socket) {
         socket.emit("watcher"); 
     });
     
-    // 6. Host Disconnect
+    // 6. Host Disconnect Guard
     socket.off("disconnectPeer");
-    socket.on("disconnectPeer", () => {
-        console.log("[Signal] Host disconnected.");
-        alert("The Host has ended the stream.");
-        window.location.href = "/";
+    socket.on("disconnectPeer", (disconnectedId) => {
+        if (disconnectedId === hostId) {
+            console.log("[Signal] Host disconnected.");
+            alert("The Host has ended the stream.");
+            window.location.href = "/";
+        } else {
+            console.log(`[Signal] Viewer ${disconnectedId} left the room.`);
+        }
     });
     
     // 7. Cleanup on page exit
@@ -348,7 +416,7 @@ function createFloatingButton(videoElement) {
     btn.onclick = (e) => {
         e.preventDefault();
         e.stopPropagation();
-        toggleFullScreen(videoElement.parentElement);
+        toggleFullScreen(document.documentElement);
     };
     
     document.body.appendChild(btn);
