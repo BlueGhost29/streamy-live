@@ -136,10 +136,17 @@ export async function init(roomId, videoElement, socket, username) {
                         viewerCompressor.attack.value = 0.003;
                         viewerCompressor.release.value = 0.25;
                         
+                        // [Hardware AEC FIX] Route to HTML tag so browser can echo-cancel it
+                        window.viewerAecDest = viewerAudioContext.createMediaStreamDestination();
                         viewerMediaSource.connect(viewerCompressor);
-                        viewerCompressor.connect(viewerAudioContext.destination);
+                        viewerCompressor.connect(window.viewerAecDest);
+                        
+                        if (!window.viewerAecPlayer) window.viewerAecPlayer = new Audio();
+                        window.viewerAecPlayer.srcObject = window.viewerAecDest.stream;
+                        window.viewerAecPlayer.play().catch(e=>{});
+                        
                         videoElement.muted = true; // Mute Raw Audio
-                        console.log("[Audio] Night Mode Activated");
+                        console.log("[Audio] Night Mode Activated (AEC protected)");
                     }
                 } else if (viewerMediaSource) {
                     viewerMediaSource.connect(viewerCompressor);
@@ -279,11 +286,8 @@ export async function init(roomId, videoElement, socket, username) {
         
         peerConnection = new RTCPeerConnection(configuration);
         
-        // [IMPORTANT] Setup transceivers BEFORE setting remote description
-        // Audio: SendRecv (Allows us to send Mic audio later)
-        // Video: RecvOnly (We only watch the movie)
-        peerConnection.addTransceiver('audio', { direction: 'sendrecv' });
-        peerConnection.addTransceiver('video', { direction: 'recvonly' });
+        // Auto-Setup Transceivers based on Host Offer
+        // (Rely purely on setRemoteDescription to map tracks accurately to avoid duplication holes.)
 
         // Handle Incoming Stream
         peerConnection.ontrack = event => {

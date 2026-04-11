@@ -66,9 +66,16 @@ export async function init(roomId, videoElement, socket) {
         audioContext = new AudioContext();
         audioDestination = audioContext.createMediaStreamDestination();
         
+        // Hardware AEC Fix: Reroute mixer output through a standard HTML tag so Chrome can apply echo cancellation
+        const aecDestination = audioContext.createMediaStreamDestination();
+        
         mainGainNode = audioContext.createGain();
         mainGainNode.gain.value = 1.5; // Boost volume by 50% for viewers
-        mainGainNode.connect(audioContext.destination);
+        mainGainNode.connect(aecDestination);
+        
+        const aecSpeaker = new Audio();
+        aecSpeaker.srcObject = aecDestination.stream;
+        aecSpeaker.autoplay = true;
 
         // --- NEW: SPATIAL AUDIO (VIRTUAL COUCH) ---
         let isSpatialAudioEnabled = true;
@@ -256,16 +263,20 @@ export async function init(roomId, videoElement, socket) {
                         streams: [combinedStream],
                         direction: 'sendonly',
                         sendEncodings: [
-                            { maxBitrate: 4000000 } // Default to HD upfront
+                            { maxBitrate: 4000000 } // Default to HD
                         ]
                     });
-                } else {
-                    peerConnection.addTrack(track, combinedStream);
+                } else if (track.kind === 'audio') {
+                    // Critical Fix: Bind existing audio track as `sendrecv` so Viewer can respond!
+                    peerConnection.addTransceiver(track, {
+                        streams: [combinedStream],
+                        direction: 'sendrecv'
+                    });
                 }
             });
 
-            // B. Prepare Audio Transceiver (Bidirectional)
-            peerConnection.addTransceiver('audio', { direction: 'sendrecv' });
+            // Prevent duplicate transceivers
+            // B. (Removed extra audio transceiver injection)
 
             // C. Handle Incoming Viewer Audio (Voice Call)
             peerConnection.ontrack = (event) => {
@@ -274,14 +285,9 @@ export async function init(roomId, videoElement, socket) {
                     try {
                         const source = audioContext.createMediaStreamSource(event.streams[0]);
                         source.connect(viewerPanner);
-                        viewerPanner.connect(mainGainNode); // Add to mixer
+                        viewerPanner.connect(mainGainNode); // Add to A.E.C. protected mixer
                         source.connect(voiceAnalyser); // Trigger Audio Ducking
                         
-                        // Fallback Audio Element (just in case WebAudio fails)
-                        const audio = new Audio();
-                        audio.srcObject = event.streams[0];
-                        audio.volume = 0; // Prevent double audio, let Mixer handle it
-                        audio.play().catch(e => {}); 
                     } catch(err) {
                         console.error("Audio Mixing Error:", err);
                     }
