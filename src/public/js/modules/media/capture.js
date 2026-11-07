@@ -225,35 +225,71 @@ export async function captureCameraStream({ facingMode = 'user', audio = true, h
         console.log(`[Capture] Camera stream acquired. Video tracks: ${stream.getVideoTracks().length}, Audio tracks: ${stream.getAudioTracks().length}`);
         return stream;
     } catch (err) {
-        console.warn("[Capture] Initial camera constraints failed, attempting generic camera capture...", err);
+        if (err && (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError')) {
+            throw new CaptureError(
+                "Camera or microphone permission was denied. Please allow camera and microphone access in browser settings.",
+                "permission_denied",
+                err
+            );
+        }
+        console.warn("[Capture] Initial camera constraints failed, attempting 720p30 mobile fallback...", err);
 
-        // Fallback: Attempt generic video/audio without ideal constraints
+        // Fallback 1: 720p30 camera with basic echoCancellation (ideal for mobile cameras)
         try {
-            const fallbackStream = await navigator.mediaDevices.getUserMedia({
-                video: true,
+            const mobileStream = await navigator.mediaDevices.getUserMedia({
+                video: {
+                    facingMode: facingMode ? { ideal: facingMode } : undefined,
+                    height: { ideal: 720 },
+                    frameRate: { ideal: 30 }
+                },
                 audio: audio ? { echoCancellation: true } : false
             });
-            return fallbackStream;
-        } catch (finalErr) {
-            console.error("[Capture] Camera capture failed:", finalErr);
-            if (finalErr.name === 'NotAllowedError' || finalErr.name === 'PermissionDeniedError') {
+            return mobileStream;
+        } catch (err720) {
+            console.warn("[Capture] 720p30 camera fallback failed, attempting generic camera capture...", err720);
+
+            // Fallback 2: Generic video/audio without ideal resolution constraints
+            try {
+                const fallbackStream = await navigator.mediaDevices.getUserMedia({
+                    video: true,
+                    audio: audio ? { echoCancellation: true } : false
+                });
+                return fallbackStream;
+            } catch (errGeneric) {
+                // Fallback 3: If audio was requested and caused a hardware/busy conflict, attempt video-only camera capture
+                if (audio && errGeneric && errGeneric.name !== 'NotAllowedError' && errGeneric.name !== 'PermissionDeniedError') {
+                    try {
+                        console.warn("[Capture] Audio-coupled camera capture failed; attempting video-only camera fallback...", errGeneric);
+                        const videoOnlyStream = await navigator.mediaDevices.getUserMedia({
+                            video: facingMode ? { facingMode: { ideal: facingMode } } : true,
+                            audio: false
+                        });
+                        return videoOnlyStream;
+                    } catch (videoOnlyErr) {
+                        // Fall through to unified error handler below
+                    }
+                }
+
+                console.error("[Capture] Camera capture failed:", errGeneric);
+                if (errGeneric.name === 'NotAllowedError' || errGeneric.name === 'PermissionDeniedError') {
+                    throw new CaptureError(
+                        "Camera or microphone permission was denied. Please allow camera and microphone access in browser settings.",
+                        "permission_denied",
+                        errGeneric
+                    );
+                } else if (errGeneric.name === 'NotFoundError' || errGeneric.name === 'DevicesNotFoundError') {
+                    throw new CaptureError(
+                        "No camera or microphone device was found on this system.",
+                        "no_devices",
+                        errGeneric
+                    );
+                }
                 throw new CaptureError(
-                    "Camera or microphone permission was denied. Please allow camera and microphone access in browser settings.",
-                    "permission_denied",
-                    finalErr
-                );
-            } else if (finalErr.name === 'NotFoundError' || finalErr.name === 'DevicesNotFoundError') {
-                throw new CaptureError(
-                    "No camera or microphone device was found on this system.",
-                    "no_devices",
-                    finalErr
+                    "Unable to access camera or microphone. Please check device permissions.",
+                    "failed",
+                    errGeneric
                 );
             }
-            throw new CaptureError(
-                "Unable to access camera or microphone. Please check device permissions.",
-                "failed",
-                finalErr
-            );
         }
     }
 }
@@ -336,7 +372,8 @@ export async function captureVideoFileStream(file, videoElement) {
     if (typeof captureFn === 'function') {
         try {
             const nativeStream = captureFn.call(videoElement);
-            if (nativeStream && nativeStream.getVideoTracks().length > 0) {
+            const vTracks = nativeStream ? nativeStream.getVideoTracks() : [];
+            if (vTracks.length > 0 && vTracks[0].readyState !== 'ended') {
                 capturedStream = nativeStream;
             }
         } catch (e) {

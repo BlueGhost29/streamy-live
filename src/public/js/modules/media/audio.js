@@ -551,7 +551,7 @@ export class DuckingController {
 
             const audioCtx = new AudioContextClass();
             if (audioCtx.state === 'suspended') {
-                audioCtx.resume().catch(() => {});
+                audioCtx.resume().catch(() => { });
             }
             speakerRecord.audioCtx = audioCtx;
 
@@ -634,7 +634,7 @@ export class DuckingController {
             record.endedHandler = null;
         }
         if (record.audioCtx) {
-            record.audioCtx.close().catch(() => {});
+            record.audioCtx.close().catch(() => { });
             record.audioCtx = null;
         }
         if (record.onSpeechChange) {
@@ -750,7 +750,7 @@ export class DuckingController {
  * @returns {object} Controller with destroy() method.
  */
 export function setupNativeDucking(voiceTrack, mediaElement, onSpeechChange = null) {
-    if (!voiceTrack || !mediaElement) return { destroy: () => {} };
+    if (!voiceTrack || !mediaElement) return { destroy: () => { } };
 
     // Attach or reuse controller on mediaElement
     let controller = mediaElement._duckingController;
@@ -786,7 +786,7 @@ export function setupNativeDucking(voiceTrack, mediaElement, onSpeechChange = nu
  * @returns {object} Controller with destroy() method.
  */
 export function setupLocalMicMonitor(micTrack, onSpeakingChange) {
-    if (!micTrack || !onSpeakingChange) return { destroy: () => {} };
+    if (!micTrack || !onSpeakingChange) return { destroy: () => { } };
 
     let isDestroyed = false;
     let animId = null;
@@ -809,7 +809,7 @@ export function setupLocalMicMonitor(micTrack, onSpeakingChange) {
             micTrack.removeEventListener('ended', destroy);
         }
         if (audioCtx) {
-            audioCtx.close().catch(() => {});
+            audioCtx.close().catch(() => { });
             audioCtx = null;
         }
         onSpeakingChange(false);
@@ -822,7 +822,7 @@ export function setupLocalMicMonitor(micTrack, onSpeakingChange) {
         if (!AudioContextClass) return { destroy };
 
         audioCtx = new AudioContextClass();
-        if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+        if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => { });
 
         const source = audioCtx.createMediaStreamSource(new MediaStream([micTrack]));
         const analyser = audioCtx.createAnalyser();
@@ -890,7 +890,7 @@ export function setupDialogueCompressor(videoElement) {
         if (!AudioContextClass) return null;
 
         const audioCtx = new AudioContextClass();
-        if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+        if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => { });
 
         const stream = new MediaStream([audioTrack]);
         const mediaSource = audioCtx.createMediaStreamSource(stream);
@@ -904,7 +904,14 @@ export function setupDialogueCompressor(videoElement) {
 
         const aecDest = audioCtx.createMediaStreamDestination();
         mediaSource.connect(compressor);
-        compressor.connect(aecDest);
+        if (typeof audioCtx.createGain === 'function') {
+            const makeupGain = audioCtx.createGain();
+            makeupGain.gain.value = 1.35; // Boost quiet dialogue while loud peaks are compressed
+            compressor.connect(makeupGain);
+            makeupGain.connect(aecDest);
+        } else {
+            compressor.connect(aecDest);
+        }
 
         let aecPlayer = document.getElementById('viewerAecPlayer');
         if (!aecPlayer) {
@@ -914,14 +921,22 @@ export function setupDialogueCompressor(videoElement) {
         }
         aecPlayer.srcObject = aecDest.stream;
         aecPlayer.volume = videoElement.volume;
+        aecPlayer.muted = Boolean(videoElement._userExplicitlyMuted);
 
         // Prevent dual audio playback: mute video element while compressor plays
-        let restoreMuted = videoElement.muted;
+        let restoreMuted = videoElement._userExplicitlyMuted !== undefined
+            ? Boolean(videoElement._userExplicitlyMuted)
+            : videoElement.muted;
         videoElement.muted = true;
 
-        // Keep aecPlayer volume synchronized with videoElement volume changes (including ducking)
+        // Keep aecPlayer volume & explicit mute state synchronized with videoElement changes (including ducking & volume button)
         const volumeSync = () => {
-            if (aecPlayer) aecPlayer.volume = videoElement.volume;
+            if (aecPlayer) {
+                aecPlayer.volume = videoElement.volume;
+                if (videoElement._userExplicitlyMuted !== undefined) {
+                    aecPlayer.muted = Boolean(videoElement._userExplicitlyMuted);
+                }
+            }
         };
         videoElement.addEventListener('volumechange', volumeSync);
 
@@ -932,7 +947,9 @@ export function setupDialogueCompressor(videoElement) {
                 delete videoElement._dialogueCompressorDestroy;
             }
             videoElement.removeEventListener('volumechange', volumeSync);
-            videoElement.muted = restoreMuted;
+            videoElement.muted = videoElement._userExplicitlyMuted !== undefined
+                ? Boolean(videoElement._userExplicitlyMuted)
+                : restoreMuted;
 
             if (aecPlayer) {
                 aecPlayer.pause();
@@ -940,7 +957,7 @@ export function setupDialogueCompressor(videoElement) {
                 if (aecPlayer.parentNode) aecPlayer.parentNode.removeChild(aecPlayer);
             }
             if (audioCtx) {
-                audioCtx.close().catch(() => {});
+                audioCtx.close().catch(() => { });
             }
         };
 

@@ -14,7 +14,12 @@ app.use(express.static(path.join(__dirname, "../public"), {
         if (filePath.endsWith("sw.js")) {
             res.set("Cache-Control", "no-cache, no-store, must-revalidate");
             res.set("Service-Worker-Allowed", "/");
-        } else if (filePath.endsWith("manifest.json")) {
+        } else if (
+            filePath.endsWith("manifest.json") ||
+            filePath.endsWith(".html") ||
+            filePath.endsWith(".js") ||
+            filePath.endsWith(".css")
+        ) {
             res.set("Cache-Control", "no-cache");
         }
     }

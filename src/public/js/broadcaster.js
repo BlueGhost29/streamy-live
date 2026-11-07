@@ -16,7 +16,7 @@
  * 5. Clean broadcast termination without forced window reload
  */
 
-import { rtcConfiguration, BITRATE_PROFILES, getDirectConnectionDiagnostics, getCapabilityDiagnostics } from './modules/core/config.js';
+import { rtcConfiguration, BITRATE_PROFILES, getAdaptiveFallbackProfile, getSafeScaleResolutionDownBy, getDirectConnectionDiagnostics, getCapabilityDiagnostics } from './modules/core/config.js';
 import { captureScreenWithFallback, captureCameraStream, captureVideoFileStream, stopStreamTracks, CaptureError } from './modules/media/capture.js';
 import { enhanceBroadcasterOffer, setupNativeDucking, DuckingController, getAudioDiagnostics } from './modules/media/audio.js';
 import { createAudienceWidget, updateAudienceList, removeViewerFromList, setViewerSpeaking, clearAudienceList } from './modules/features/audience.js';
@@ -24,6 +24,7 @@ import { createAudienceWidget, updateAudienceList, removeViewerFromList, setView
 // Global Broadcaster State
 const peerConnections = {};
 const pendingCandidates = {};
+const viewerStates = {};
 let localStream = null;
 let combinedStream = null;
 let micStream = null;
@@ -36,6 +37,175 @@ let streamOptMode = 'movie'; // 'movie' | 'anime'
 let duckingController = null;
 let isTogglingHostMic = false;
 let isFlippingCamera = false;
+
+function clearViewerTimers(id) {
+    const st = viewerStates[id];
+    if (!st) return;
+    if (st.handshakeTimer) {
+        clearTimeout(st.handshakeTimer);
+        st.handshakeTimer = null;
+    }
+    if (st.disconnectTimer) {
+        clearTimeout(st.disconnectTimer);
+        st.disconnectTimer = null;
+    }
+    if (st.telemetryInterval) {
+        clearInterval(st.telemetryInterval);
+        st.telemetryInterval = null;
+    }
+}
+
+function deleteViewerState(id) {
+    clearViewerTimers(id);
+    delete viewerStates[id];
+}
+
+/**
+ * Waits briefly (up to maxWaitMs) for local host/pooled-STUN ICE candidates to be
+ * embedded into pc.localDescription.sdp while Trickle ICE also runs concurrently.
+ * This ensures Same-Wi-Fi (host) and Mobile-Data/Jio (srflx) candidates arrive inside
+ * the Offer SDP itself even if trickle messages experience jitter.
+ */
+function waitForInitialCandidates(pc, maxWaitMs = 120) {
+    if (!pc || pc.iceGatheringState === 'complete') {
+        return Promise.resolve();
+    }
+    return new Promise(resolve => {
+        let settled = false;
+        const done = () => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            try {
+                pc.removeEventListener('icegatheringstatechange', onState);
+                pc.removeEventListener('icecandidate', onCand);
+            } catch (e) {}
+            resolve();
+        };
+        const onState = () => {
+            if (pc.iceGatheringState === 'complete') done();
+        };
+        const onCand = (ev) => {
+            if (!ev || !ev.candidate) {
+                done();
+                return;
+            }
+            const candStr = ev.candidate.candidate || '';
+            if (candStr.includes('typ srflx')) {
+                // Once at least one server-reflexive candidate is gathered alongside host candidates, resolve after a tiny 15ms batch window
+                setTimeout(done, 15);
+            }
+        };
+        const timer = setTimeout(done, maxWaitMs);
+        try {
+            pc.addEventListener('icegatheringstatechange', onState);
+            pc.addEventListener('icecandidate', onCand);
+        } catch (e) {
+            done();
+        }
+    });
+}
+
+function configureVideoCodecs(peerConnection, preferHardwareFallback = false, codecFallbackStep = 0) {
+    if (!peerConnection || typeof RTCRtpSender === 'undefined' || typeof RTCRtpSender.getCapabilities !== 'function') {
+        return;
+    }
+    try {
+        const caps = RTCRtpSender.getCapabilities('video');
+        if (!caps || !Array.isArray(caps.codecs) || caps.codecs.length === 0) return;
+
+        const vp9Profile0Codecs = [];
+        const baselineH264Codecs = [];
+        const otherH264Codecs = [];
+        const vp8Codecs = [];
+        const otherCodecs = [];
+
+        for (const c of caps.codecs) {
+            const mime = (c.mimeType || '').toLowerCase();
+            const fmtp = (c.sdpFmtpLine || '').toLowerCase();
+            if (mime === 'video/vp9') {
+                // Exclude 10-bit/HDR VP9 profiles (profile-id=1, 2, 3) which cause black screens
+                // on mobile hardware decoders (such as Google Pixel Tensor c2.exynos.vp9.decoder)
+                if (!fmtp.includes('profile-id=') || fmtp.includes('profile-id=0')) {
+                    vp9Profile0Codecs.push(c);
+                }
+            } else if (mime === 'video/h264') {
+                // Prefer Constrained Baseline / Baseline (42e01f, 42001f, 42801f) over High/Main profiles for mobile compatibility
+                if (fmtp.includes('42e0') || fmtp.includes('4200') || fmtp.includes('4280')) {
+                    baselineH264Codecs.push(c);
+                } else {
+                    otherH264Codecs.push(c);
+                }
+            } else if (mime === 'video/vp8') {
+                vp8Codecs.push(c);
+            } else {
+                otherCodecs.push(c);
+            }
+        }
+
+        const h264Ordered = [...baselineH264Codecs, ...otherH264Codecs];
+        let orderedCodecs;
+        if ((codecFallbackStep % 3) === 1) {
+            // Step 1: Hardware Constrained Baseline H264 first, then VP8, then 8-bit VP9
+            orderedCodecs = [...h264Ordered, ...vp8Codecs, ...vp9Profile0Codecs, ...otherCodecs];
+        } else if (!preferHardwareFallback && (codecFallbackStep % 3) === 2) {
+            // Step 2: 8-bit VP9 Profile 0 first, then VP8, then Constrained Baseline H264
+            orderedCodecs = [...vp9Profile0Codecs, ...vp8Codecs, ...h264Ordered, ...otherCodecs];
+        } else {
+            // Default (Step 0) & Hardware Fallback: Universal VP8 first, then Constrained Baseline H264, then 8-bit VP9
+            // Prevents Google Pixel Tensor (c2.exynos.vp9.decoder) & mobile hardware VP9 black screens from Frame 1
+            orderedCodecs = [...vp8Codecs, ...h264Ordered, ...vp9Profile0Codecs, ...otherCodecs];
+        }
+
+        if (orderedCodecs.length === 0) return;
+
+        const transceivers = peerConnection.getTransceivers();
+        for (const t of transceivers) {
+            if (t.sender && t.sender.track && t.sender.track.kind === 'video' && typeof t.setCodecPreferences === 'function') {
+                t.setCodecPreferences(orderedCodecs);
+            }
+        }
+    } catch (e) {
+        console.warn("[Codec] Codec preference negotiation warning:", e);
+    }
+}
+
+async function applyViewerEncodingProfile(id, pc) {
+    const targetPc = pc || peerConnections[id];
+    const st = viewerStates[id];
+    if (!targetPc || !st) return null;
+
+    const videoSender = targetPc.getSenders().find(s => s.track && s.track.kind === 'video');
+    if (!videoSender || typeof videoSender.getParameters !== 'function' || typeof videoSender.setParameters !== 'function') {
+        return null;
+    }
+
+    const effectiveTier = st.manualQuality === 'low' ? Math.max(st.fallbackTier, 2) : st.fallbackTier;
+    const profile = getAdaptiveFallbackProfile(effectiveTier, streamOptMode);
+    const trackSettings = (videoSender.track && typeof videoSender.track.getSettings === 'function')
+        ? videoSender.track.getSettings()
+        : null;
+    const safeScale = getSafeScaleResolutionDownBy(profile.scaleResolutionDownBy, trackSettings);
+
+    try {
+        const params = videoSender.getParameters() || {};
+        if (!params.encodings || params.encodings.length === 0) {
+            params.encodings = [{}];
+        }
+        params.degradationPreference = profile.degradationPreference;
+        params.encodings[0].maxBitrate = profile.maxBitrate;
+        params.encodings[0].scaleResolutionDownBy = safeScale;
+        if (profile.maxFramerate) {
+            params.encodings[0].maxFramerate = profile.maxFramerate;
+        }
+        await videoSender.setParameters(params);
+        console.log(`[AdaptiveFallback] Viewer ${id} set to ${profile.label} (tier ${effectiveTier}): maxBitrate=${profile.maxBitrate}, scaleDown=${safeScale}`);
+        return profile;
+    } catch (e) {
+        console.warn(`[AdaptiveFallback] Could not update sender parameters for ${id}:`, e);
+        return null;
+    }
+}
 
 function ensureAudioElementPlays(audioEl, duckCtrl) {
     if (!audioEl) return;
@@ -167,6 +337,7 @@ export async function init(roomId, videoElement, socket, options = {}) {
 
         // Remove any mounted viewer voice audio elements and close peer connections
         Object.keys(peerConnections).forEach(id => {
+            deleteViewerState(id);
             const voicePlayer = document.getElementById(`voice_${id}`);
             if (voicePlayer && voicePlayer.parentNode) {
                 voicePlayer.parentNode.removeChild(voicePlayer);
@@ -182,9 +353,11 @@ export async function init(roomId, videoElement, socket, options = {}) {
             delete peerConnections[id];
             delete pendingCandidates[id];
         });
+        Object.keys(viewerStates).forEach(id => deleteViewerState(id));
         Object.keys(pendingCandidates).forEach(id => delete pendingCandidates[id]);
         window.flipHostCamera = null;
         window.setStreamOptimizationMode = null;
+        window.toggleHostMic = null;
 
         if (typeof onEnded === 'function') {
             onEnded(reason);
@@ -194,6 +367,7 @@ export async function init(roomId, videoElement, socket, options = {}) {
     window.stopBroadcast = cleanupBroadcast;
     window.broadcaster = {
         get peerConnections() { return peerConnections; },
+        get viewerStates() { return viewerStates; },
         get mode() { return currentMode; },
         get optimizationMode() { return streamOptMode; },
         get stream() { return localStream; },
@@ -213,22 +387,8 @@ export async function init(roomId, videoElement, socket, options = {}) {
                 videoTrack.contentHint = streamOptMode === 'anime' ? 'detail' : 'motion';
             }
         }
-        const targetProfile = streamOptMode === 'anime' ? BITRATE_PROFILES.ANIME : BITRATE_PROFILES.HD;
-        await Promise.all(Object.values(peerConnections).map(async pc => {
-            const videoSender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
-            if (!videoSender) return;
-            try {
-                const params = videoSender.getParameters();
-                if (!params.encodings || params.encodings.length === 0) {
-                    params.encodings = [{}];
-                }
-                params.degradationPreference = targetProfile.degradationPreference;
-                params.encodings[0].maxBitrate = targetProfile.maxBitrate;
-                params.encodings[0].scaleResolutionDownBy = targetProfile.scaleResolutionDownBy;
-                await videoSender.setParameters(params);
-            } catch (e) {
-                console.warn("[Broadcaster] Sender optimization update warning:", e);
-            }
+        await Promise.all(Object.keys(peerConnections).map(async id => {
+            await applyViewerEncodingProfile(id, peerConnections[id]);
         }));
         return streamOptMode;
     };
@@ -495,6 +655,10 @@ export async function init(roomId, videoElement, socket, options = {}) {
                         console.warn("[Broadcaster] Camera recovery failed; ending broadcast:", recoverErr);
                     }
                 }
+                if (currentMode === 'file') {
+                    console.log("[Broadcaster] Video file playback ended; keeping room active for replay or seek.");
+                    return;
+                }
                 console.log("[Broadcaster] Video track ended by browser/system controls.");
                 cleanupBroadcast('system_controls');
             };
@@ -512,6 +676,140 @@ export async function init(roomId, videoElement, socket, options = {}) {
             videoElement.muted = true; // Prevent local audio feedback loop
         }
 
+        const performIceRestart = async (id, reason = 'recovery') => {
+            const pc = peerConnections[id];
+            const st = viewerStates[id];
+            if (!pc || !st || pc.signalingState === 'closed' || pc.iceConnectionState === 'closed') {
+                return false;
+            }
+            console.log(`[ICE] Triggering ICE restart & fallback negotiation for ${id} (reason: ${reason}, attempt: ${st.iceRestartCount}, tier: ${st.fallbackTier}, signaling: ${pc.signalingState})`);
+
+            await applyViewerEncodingProfile(id, pc);
+
+            // If still waiting for the initial answer ('have-local-offer'), wait briefly for gathered candidates
+            // and re-emit localDescription which now contains all pre-gathered STUN/host ICE candidates in its SDP.
+            if (pc.signalingState === 'have-local-offer' && pc.localDescription) {
+                await waitForInitialCandidates(pc, 120);
+                if (peerConnections[id] !== pc) return false;
+                socket.emit("offer", id, pc.localDescription);
+                return true;
+            }
+
+            if (pc.signalingState !== 'stable') {
+                return false;
+            }
+
+            const restartGen = ++st.generation;
+            st.codecFallbackStep = (st.codecFallbackStep || 0) + 1;
+            configureVideoCodecs(pc, st.fallbackTier >= 1 || st.iceRestartCount > 0, st.codecFallbackStep);
+
+            try {
+                if (typeof pc.restartIce === 'function') {
+                    pc.restartIce();
+                }
+                const offer = await pc.createOffer({ iceRestart: true });
+                if (peerConnections[id] !== pc || !viewerStates[id] || viewerStates[id].generation !== restartGen) {
+                    return false;
+                }
+                const enhancedSdp = enhanceBroadcasterOffer(offer.sdp, systemAudioTrack, pc);
+                await pc.setLocalDescription({ type: 'offer', sdp: enhancedSdp });
+                if (peerConnections[id] !== pc || !viewerStates[id] || viewerStates[id].generation !== restartGen) {
+                    return false;
+                }
+                await waitForInitialCandidates(pc, 100);
+                if (peerConnections[id] !== pc || !viewerStates[id] || viewerStates[id].generation !== restartGen) {
+                    return false;
+                }
+                socket.emit("offer", id, pc.localDescription);
+                return true;
+            } catch (err) {
+                console.warn(`[ICE] ICE restart offer failed for ${id}:`, err);
+                return false;
+            }
+        };
+        if (window.broadcaster) {
+            window.broadcaster.restartIce = performIceRestart;
+        }
+
+        const startViewerTelemetry = (id, pc) => {
+            const st = viewerStates[id];
+            if (!st || !pc) return;
+            if (st.telemetryInterval) {
+                clearInterval(st.telemetryInterval);
+            }
+            st.telemetryInterval = setInterval(async () => {
+                if (peerConnections[id] !== pc || !viewerStates[id]) {
+                    clearViewerTimers(id);
+                    return;
+                }
+                const iceState = pc.iceConnectionState;
+                if (iceState !== 'connected' && iceState !== 'completed') return;
+                if (typeof pc.getStats !== 'function') return;
+
+                try {
+                    const stats = await pc.getStats();
+                    if (peerConnections[id] !== pc || !viewerStates[id]) return;
+
+                    let packetsSent = 0;
+                    let packetsLost = 0;
+                    let rtt = 0;
+                    let qualityLimitation = 'none';
+
+                    stats.forEach(report => {
+                        if (report.type === 'outbound-rtp' && report.kind === 'video') {
+                            packetsSent = report.packetsSent || 0;
+                            if (report.qualityLimitationReason) {
+                                qualityLimitation = report.qualityLimitationReason;
+                            }
+                        } else if (report.type === 'remote-inbound-rtp' && report.kind === 'video') {
+                            packetsLost = report.packetsLost || 0;
+                            if (typeof report.roundTripTime === 'number') {
+                                rtt = report.roundTripTime;
+                            }
+                        } else if (report.type === 'candidate-pair' && report.state === 'succeeded' && report.nominated) {
+                            if (typeof report.currentRoundTripTime === 'number' && rtt === 0) {
+                                rtt = report.currentRoundTripTime;
+                            }
+                        }
+                    });
+
+                    const prev = st.lastStats;
+                    st.lastStats = { packetsSent, packetsLost, timestamp: Date.now() };
+
+                    let lossRatio = 0;
+                    if (prev && packetsSent > prev.packetsSent) {
+                        const sentDelta = packetsSent - prev.packetsSent;
+                        const lostDelta = Math.max(0, packetsLost - prev.packetsLost);
+                        if (sentDelta + lostDelta > 10) {
+                            lossRatio = lostDelta / (sentDelta + lostDelta);
+                        }
+                    }
+
+                    const isDegraded = lossRatio > 0.05 || rtt > 0.35 || qualityLimitation === 'bandwidth' || qualityLimitation === 'cpu';
+                    const isHealthy = lossRatio < 0.01 && rtt < 0.20 && qualityLimitation === 'none';
+
+                    if (isDegraded) {
+                        st.consecutiveGoodChecks = 0;
+                        if (st.fallbackTier < 3) {
+                            st.fallbackTier = Math.min(3, st.fallbackTier + 1);
+                            console.warn(`[AdaptiveFallback] Network congestion detected for ${id} (loss=${(lossRatio * 100).toFixed(1)}%, rtt=${Math.round(rtt * 1000)}ms, limit=${qualityLimitation}). Stepping down to tier ${st.fallbackTier}.`);
+                            await applyViewerEncodingProfile(id, pc);
+                        }
+                    } else if (isHealthy) {
+                        st.consecutiveGoodChecks = (st.consecutiveGoodChecks || 0) + 1;
+                        if (st.consecutiveGoodChecks >= 5 && st.fallbackTier > 0 && st.manualQuality !== 'low') {
+                            st.fallbackTier = Math.max(0, st.fallbackTier - 1);
+                            st.consecutiveGoodChecks = 0;
+                            console.log(`[AdaptiveFallback] Sustained healthy link for ${id}. Stepping quality up to tier ${st.fallbackTier}.`);
+                            await applyViewerEncodingProfile(id, pc);
+                        }
+                    }
+                } catch (e) {
+                    // Ignore transient getStats errors
+                }
+            }, 2500);
+        };
+
         // Notify Signaling Server
         socket.emit("broadcaster", roomId);
 
@@ -520,6 +818,32 @@ export async function init(roomId, videoElement, socket, options = {}) {
         socket.on("watcher", async (id, username) => {
             if (!localStream || !videoTrack) return;
             console.log("Connecting to Viewer:", id, username);
+
+            const prevState = viewerStates[id];
+            const nextGen = ((prevState && prevState.generation) || 0) + 1;
+            const preservedManualQuality = (prevState && prevState.manualQuality) || 'high';
+            // Distinguish a real post-answer/timeout recovery retry from the initial click on "JOIN MOVIE" after pre-curtain join-room
+            const isRecoveryRetry = Boolean(prevState && (prevState.hasAnswered || prevState.iceRestartCount > 0 || prevState.manualQuality === 'low'));
+            const nextCodecStep = isRecoveryRetry ? ((prevState && prevState.codecFallbackStep) || 0) + 1 : 0;
+            const initialFallbackTier = isRecoveryRetry
+                ? Math.min(3, Math.max((prevState && prevState.fallbackTier) || 0, 2))
+                : 0;
+
+            clearViewerTimers(id);
+            viewerStates[id] = {
+                generation: nextGen,
+                username: username || (prevState && prevState.username) || 'Viewer',
+                manualQuality: preservedManualQuality,
+                fallbackTier: initialFallbackTier,
+                codecFallbackStep: nextCodecStep,
+                hasAnswered: false,
+                iceRestartCount: 0,
+                handshakeTimer: null,
+                disconnectTimer: null,
+                telemetryInterval: null,
+                lastStats: null,
+                consecutiveGoodChecks: 0
+            };
 
             // Clean up any pre-existing connection for the same viewer ID before replacing it
             if (peerConnections[id]) {
@@ -539,15 +863,26 @@ export async function init(roomId, videoElement, socket, options = {}) {
             peerConnections[id] = peerConnection;
             pendingCandidates[id] = [];
             const currentTotal = Object.keys(peerConnections).length;
-            updateAudienceList(id, "Connecting...", "orange", username, currentTotal);
+            const displayUsername = viewerStates[id].username;
+            updateAudienceList(id, "Connecting...", "orange", displayUsername, currentTotal);
 
             // --- A. THREE ISOLATED TRANSCEIVERS ---
             // 1. Movie Video (sendonly)
             if (videoTrack) {
-                const activeProfile = streamOptMode === 'anime' ? BITRATE_PROFILES.ANIME : BITRATE_PROFILES.HD;
+                const effectiveInitTier = preservedManualQuality === 'low' ? Math.max(initialFallbackTier, 2) : initialFallbackTier;
+                const activeProfile = getAdaptiveFallbackProfile(effectiveInitTier, streamOptMode);
+                const trackSettings = typeof videoTrack.getSettings === 'function' ? videoTrack.getSettings() : null;
+                const safeScale = getSafeScaleResolutionDownBy(activeProfile.scaleResolutionDownBy, trackSettings);
+                const encodingInit = {
+                    maxBitrate: activeProfile.maxBitrate,
+                    scaleResolutionDownBy: safeScale
+                };
+                if (activeProfile.maxFramerate) {
+                    encodingInit.maxFramerate = activeProfile.maxFramerate;
+                }
                 const videoTransceiver = peerConnection.addTransceiver(videoTrack, {
                     direction: 'sendonly',
-                    sendEncodings: [{ maxBitrate: activeProfile.maxBitrate, scaleResolutionDownBy: activeProfile.scaleResolutionDownBy }]
+                    sendEncodings: [encodingInit]
                 });
                 try {
                     if (videoTransceiver && videoTransceiver.sender && typeof videoTransceiver.sender.getParameters === 'function') {
@@ -629,46 +964,112 @@ export async function init(roomId, videoElement, socket, options = {}) {
                 }
             };
 
-            // --- C. FORCE VP9 CODEC PREFERENCE WITH ROBUST FALLBACKS ---
-            try {
-                const transceivers = peerConnection.getTransceivers();
-                for (const t of transceivers) {
-                    if (t.sender.track && t.sender.track.kind === 'video') {
-                        const caps = RTCRtpSender.getCapabilities('video');
-                        if (caps && Array.isArray(caps.codecs)) {
-                            const vp9Codecs = caps.codecs.filter(c => c.mimeType && c.mimeType.toLowerCase() === 'video/vp9');
-                            const otherCodecs = caps.codecs.filter(c => !c.mimeType || c.mimeType.toLowerCase() !== 'video/vp9');
-                            if (vp9Codecs.length > 0) {
-                                t.setCodecPreferences([...vp9Codecs, ...otherCodecs]);
-                                console.log(`[Codec] Prioritized VP9 with ${otherCodecs.length} fallback codecs`);
-                            }
-                        }
-                    }
-                }
-            } catch (e) {
-                console.warn("[Codec] VP9 preference negotiation error:", e);
-            }
+            // --- C. CONFIGURE SAFE CODEC PREFERENCES WITH HARDWARE/VP8 FALLBACKS ---
+            configureVideoCodecs(peerConnection, initialFallbackTier >= 1 || isRecoveryRetry, nextCodecStep);
 
-            // --- D. ICE HANDLING & DIRECT CONNECTION STATE ---
+            // --- D. ICE HANDLING, WATCHDOGS & SELF-HEALING STATE ---
             peerConnection.onicecandidate = event => {
+                if (peerConnections[id] !== peerConnection) return;
                 if (event.candidate) socket.emit("candidate", id, event.candidate);
             };
+
+            // Handshake Watchdog: if stuck in "Connecting..." ('new' or 'checking') on mobile, step down & restart ICE
+            const armHandshakeWatchdog = () => {
+                if (!viewerStates[id]) return;
+                if (viewerStates[id].handshakeTimer) clearTimeout(viewerStates[id].handshakeTimer);
+                viewerStates[id].handshakeTimer = setTimeout(async () => {
+                    if (peerConnections[id] !== peerConnection || !viewerStates[id]) return;
+                    const st = viewerStates[id];
+                    const iceState = peerConnection.iceConnectionState;
+                    if (iceState === 'new' || iceState === 'checking') {
+                        // If viewer is still on the JOIN MOVIE curtain (hasn't answered yet), re-emit offer with gathered candidates without burning retries
+                        if (!st.hasAnswered && peerConnection.signalingState === 'have-local-offer' && peerConnection.localDescription) {
+                            socket.emit("offer", id, peerConnection.localDescription);
+                            armHandshakeWatchdog();
+                            return;
+                        }
+                        console.warn(`[ICE] Handshake watchdog triggered for ${id} (state: ${iceState}). Stepping down bitrate and restarting ICE...`);
+                        st.fallbackTier = Math.max(st.fallbackTier, 2); // SD 800 kbps for fast mobile lock
+                        st.iceRestartCount++;
+                        await performIceRestart(id, 'handshake_watchdog');
+                    }
+                }, 5500);
+            };
+            armHandshakeWatchdog();
 
             peerConnection.oniceconnectionstatechange = () => {
                 // Ignore events from superseded peerConnections
                 if (peerConnections[id] !== peerConnection) return;
 
                 const state = peerConnection.iceConnectionState;
+                const st = viewerStates[id];
+                const viewerName = (st && st.username) || username;
                 console.log(`[ICE] Direct connection state with ${id}: ${state}`);
                 const total = Object.keys(peerConnections).length;
                 
                 if (state === 'connected' || state === 'completed') {
-                    updateAudienceList(id, "Online (Direct)", "#22c55e", username, total);
+                    if (st) {
+                        if (st.handshakeTimer) {
+                            clearTimeout(st.handshakeTimer);
+                            st.handshakeTimer = null;
+                        }
+                        if (st.disconnectTimer) {
+                            clearTimeout(st.disconnectTimer);
+                            st.disconnectTimer = null;
+                        }
+                        st.iceRestartCount = 0;
+                    }
+                    updateAudienceList(id, "Online (Direct)", "#22c55e", viewerName, total);
+                    startViewerTelemetry(id, peerConnection);
                 } else if (state === 'disconnected') {
-                    updateAudienceList(id, "Unstable", "#eab308", username, total);
+                    updateAudienceList(id, "Unstable", "#eab308", viewerName, total);
+                    if (st) {
+                        if (st.telemetryInterval) {
+                            clearInterval(st.telemetryInterval);
+                            st.telemetryInterval = null;
+                        }
+                        // Immediately step down bitrate to relieve wireless/mobile UDP buffer congestion
+                        st.fallbackTier = Math.min(3, Math.max((st.fallbackTier || 0) + 1, 2));
+                        applyViewerEncodingProfile(id, peerConnection);
+
+                        if (st.disconnectTimer) clearTimeout(st.disconnectTimer);
+                        st.disconnectTimer = setTimeout(async () => {
+                            if (peerConnections[id] !== peerConnection || !viewerStates[id]) return;
+                            if (peerConnection.iceConnectionState === 'disconnected' && st.iceRestartCount < 3) {
+                                st.iceRestartCount++;
+                                await performIceRestart(id, 'unstable_disconnected');
+                            }
+                        }, 2800);
+                    }
                 } else if (state === 'failed') {
+                    if (st && st.iceRestartCount < 2) {
+                        clearViewerTimers(id);
+                        st.iceRestartCount++;
+                        st.fallbackTier = 3; // Emergency 450 kbps @ 24fps fallback
+                        updateAudienceList(id, "Unstable", "#eab308", viewerName, total);
+                        performIceRestart(id, 'failed_recovery');
+                        st.disconnectTimer = setTimeout(() => {
+                            if (peerConnections[id] !== peerConnection) return;
+                            if (peerConnection.iceConnectionState === 'failed' || peerConnection.iceConnectionState === 'disconnected') {
+                                console.warn(`[ICE] Direct connection recovery exhausted with ${id}:`, getDirectConnectionDiagnostics('failed'));
+                                updateAudienceList(id, "Failed (NAT Blocked)", "#ef4444", viewerName, Object.keys(peerConnections).length);
+                                if (duckingController) {
+                                    duckingController.unregisterVoiceTrack(id);
+                                }
+                                const voicePlayer = document.getElementById(`voice_${id}`);
+                                if (voicePlayer && voicePlayer.parentNode) {
+                                    voicePlayer.parentNode.removeChild(voicePlayer);
+                                }
+                                deleteViewerState(id);
+                                peerConnection.close();
+                                delete peerConnections[id];
+                            }
+                        }, 6000);
+                        return;
+                    }
+
                     console.warn(`[ICE] Direct connection failed with ${id}:`, getDirectConnectionDiagnostics(state));
-                    updateAudienceList(id, "Failed (NAT Blocked)", "#ef4444", username, total);
+                    updateAudienceList(id, "Failed (NAT Blocked)", "#ef4444", viewerName, total);
                     if (duckingController) {
                         duckingController.unregisterVoiceTrack(id);
                     }
@@ -676,6 +1077,7 @@ export async function init(roomId, videoElement, socket, options = {}) {
                     if (voicePlayer && voicePlayer.parentNode) {
                         voicePlayer.parentNode.removeChild(voicePlayer);
                     }
+                    deleteViewerState(id);
                     peerConnection.close();
                     delete peerConnections[id];
                 } else if (state === 'closed') {
@@ -686,20 +1088,32 @@ export async function init(roomId, videoElement, socket, options = {}) {
                     if (voicePlayer && voicePlayer.parentNode) {
                         voicePlayer.parentNode.removeChild(voicePlayer);
                     }
+                    deleteViewerState(id);
                     peerConnection.close();
                     delete peerConnections[id];
                     removeViewerFromList(id, Object.keys(peerConnections).length);
                 }
             };
 
-            // --- E. CREATE OFFER & ENHANCE SDP ---
+            // --- E. CREATE OFFER & ENHANCE SDP (Generation-Guarded + Embedded Candidates) ---
             try {
                 const offer = await peerConnection.createOffer();
+                if (peerConnections[id] !== peerConnection || !viewerStates[id] || viewerStates[id].generation !== nextGen) {
+                    return;
+                }
 
                 // Scope SDP enhancement strictly to the programme-audio transceiver lane
                 const enhancedSdp = enhanceBroadcasterOffer(offer.sdp, systemAudioTrack, peerConnection);
 
                 await peerConnection.setLocalDescription({ type: 'offer', sdp: enhancedSdp });
+                if (peerConnections[id] !== peerConnection || !viewerStates[id] || viewerStates[id].generation !== nextGen) {
+                    return;
+                }
+                // Wait briefly (up to 120ms) so pooled LAN host & STUN srflx candidates are embedded in the Offer SDP itself
+                await waitForInitialCandidates(peerConnection, 120);
+                if (peerConnections[id] !== peerConnection || !viewerStates[id] || viewerStates[id].generation !== nextGen) {
+                    return;
+                }
                 socket.emit("offer", id, peerConnection.localDescription);
             } catch (err) {
                 console.error("Error creating offer:", err);
@@ -710,13 +1124,20 @@ export async function init(roomId, videoElement, socket, options = {}) {
         socket.off("answer");
         socket.on("answer", async (id, description) => {
             const pc = peerConnections[id];
-            if (!pc) return;
+            if (!pc || !description) return;
+            if (pc.signalingState !== 'have-local-offer') {
+                console.warn(`[WebRTC] Ignoring stale answer from ${id} in signalingState=${pc.signalingState}`);
+                return;
+            }
+            if (viewerStates[id]) {
+                viewerStates[id].hasAnswered = true;
+            }
             try {
                 await pc.setRemoteDescription(description);
                 const queued = pendingCandidates[id] || [];
                 delete pendingCandidates[id];
                 for (const cand of queued) {
-                    if (peerConnections[id] === pc) {
+                    if (peerConnections[id] === pc && cand && cand.candidate) {
                         await pc.addIceCandidate(new RTCIceCandidate(cand)).catch(e => console.warn("[ICE] Queued candidate error:", e));
                     }
                 }
@@ -729,8 +1150,9 @@ export async function init(roomId, videoElement, socket, options = {}) {
         socket.on("candidate", (id, candidate) => {
             const pc = peerConnections[id];
             if (!pc || !candidate) return;
-            if (pc.remoteDescription && pc.remoteDescription.type) {
-                pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(e => console.error(e));
+            if (typeof candidate.candidate === 'string' && candidate.candidate.trim() === '') return;
+            if (pc.remoteDescription && pc.remoteDescription.type && pc.signalingState === 'stable') {
+                pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(e => console.warn("[ICE] Candidate warning:", e));
             } else {
                 if (!pendingCandidates[id]) pendingCandidates[id] = [];
                 pendingCandidates[id].push(candidate);
@@ -741,6 +1163,7 @@ export async function init(roomId, videoElement, socket, options = {}) {
         socket.on("disconnectPeer", id => {
             console.log(`Viewer ${id} disconnected.`);
             delete pendingCandidates[id];
+            deleteViewerState(id);
             if (duckingController) {
                 duckingController.unregisterVoiceTrack(id);
             }
@@ -768,31 +1191,32 @@ export async function init(roomId, videoElement, socket, options = {}) {
             }
 
             console.log(`[Bitrate] Setting bitrate for ${viewerId} to ${quality}`);
-            const videoSender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
-            if (!videoSender) return;
-
-            try {
-                const params = videoSender.getParameters();
-                if (!params.encodings || params.encodings.length === 0) {
-                    params.encodings = [{}];
-                }
-
+            if (!viewerStates[viewerId]) {
+                viewerStates[viewerId] = {
+                    generation: 1,
+                    username: 'Viewer',
+                    manualQuality: quality,
+                    fallbackTier: quality === 'low' ? 2 : 0,
+                    codecFallbackStep: quality === 'low' ? 1 : 0,
+                    hasAnswered: true,
+                    iceRestartCount: 0,
+                    handshakeTimer: null,
+                    disconnectTimer: null,
+                    telemetryInterval: null,
+                    lastStats: null,
+                    consecutiveGoodChecks: 0
+                };
+            } else {
+                viewerStates[viewerId].manualQuality = quality;
                 if (quality === 'low') {
-                    params.degradationPreference = BITRATE_PROFILES.SD.degradationPreference;
-                    params.encodings[0].maxBitrate = BITRATE_PROFILES.SD.maxBitrate;
-                    params.encodings[0].scaleResolutionDownBy = BITRATE_PROFILES.SD.scaleResolutionDownBy; 
+                    viewerStates[viewerId].fallbackTier = Math.max(viewerStates[viewerId].fallbackTier || 0, 2);
                 } else {
-                    const activeProfile = streamOptMode === 'anime' ? BITRATE_PROFILES.ANIME : BITRATE_PROFILES.HD;
-                    params.degradationPreference = activeProfile.degradationPreference;
-                    params.encodings[0].maxBitrate = activeProfile.maxBitrate;
-                    params.encodings[0].scaleResolutionDownBy = activeProfile.scaleResolutionDownBy; 
+                    viewerStates[viewerId].fallbackTier = 0;
+                    viewerStates[viewerId].consecutiveGoodChecks = 0;
                 }
-
-                await videoSender.setParameters(params);
-                console.log(`[Bitrate] Updated sender encoding for ${viewerId}: maxBitrate=${params.encodings[0].maxBitrate}, scaleDown=${params.encodings[0].scaleResolutionDownBy}`);
-            } catch (err) {
-                console.error("[Bitrate] Failed to update sender parameters:", err);
             }
+
+            await applyViewerEncodingProfile(viewerId, pc);
         });
 
     } catch (err) {

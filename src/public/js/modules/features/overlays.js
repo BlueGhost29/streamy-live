@@ -25,7 +25,7 @@ export function initAmbilight(video, canvas) {
         canvas._ambilightCleanup();
     }
 
-    const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
+    const ctx = canvas.getContext('2d', { alpha: false });
     let isRunning = true;
     let isEnabled = true;
     let animId = null;
@@ -43,7 +43,9 @@ export function initAmbilight(video, canvas) {
             document.visibilityState === 'visible' && 
             !video.paused && 
             !video.ended && 
-            video.readyState >= 2) {
+            video.readyState >= 2 &&
+            video.videoWidth > 0 &&
+            video.videoHeight > 0) {
             
             if (now - lastDrawTime >= FRAME_INTERVAL) {
                 lastDrawTime = now;

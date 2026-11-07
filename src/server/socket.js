@@ -40,6 +40,85 @@ module.exports = (io) => {
         return false;
     }
 
+    // Count connected sockets actively occupying a room (optionally excluding a socket that is currently leaving)
+    function getActiveRoomSize(roomId, excludeSocketId = null) {
+        const room = io.sockets.adapter.rooms.get(roomId);
+        if (!room) return 0;
+        let count = 0;
+        for (const memberId of room) {
+            if (memberId === excludeSocketId) continue;
+            const memberSocket = io.sockets.sockets.get(memberId);
+            if (memberSocket && memberSocket.connected) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    // Schedule 15-second debounced room state purge once a room has 0 active participants
+    function scheduleRoomCleanup(roomId, delayMs = 15000) {
+        if (!isValidRoomId(roomId)) return;
+        if (cleanupTimers.has(roomId)) {
+            clearTimeout(cleanupTimers.get(roomId));
+            cleanupTimers.delete(roomId);
+        }
+        const timer = setTimeout(() => {
+            if (getActiveRoomSize(roomId) === 0) {
+                chatHistory.delete(roomId);
+                roomHosts.delete(roomId);
+                cleanupTimers.delete(roomId);
+                console.log(`[Memory] Cleaned up stale room instance: ${roomId}`);
+            } else {
+                cleanupTimers.delete(roomId);
+            }
+        }, delayMs);
+        if (typeof timer.unref === "function") {
+            timer.unref();
+        }
+        cleanupTimers.set(roomId, timer);
+    }
+
+    // Handle a socket leaving a specific room (via explicit leave-room, room switch, or socket disconnect)
+    function handleSocketLeaveRoom(socket, roomId, isDisconnecting = false) {
+        if (!isValidRoomId(roomId)) return;
+
+        socket.to(roomId).emit("disconnectPeer", socket.id);
+
+        if (roomHosts.get(roomId) === socket.id) {
+            roomHosts.delete(roomId);
+            socket.to(roomId).emit("host-left", socket.id);
+        }
+
+        if (!isDisconnecting) {
+            socket.leave(roomId);
+        }
+
+        const remaining = getActiveRoomSize(roomId, isDisconnecting ? socket.id : null);
+        if (remaining === 0) {
+            scheduleRoomCleanup(roomId, 15000);
+        }
+    }
+
+    // Periodic safety sweep: ensure any room with 0 active sockets and no pending timer is scheduled for cleanup
+    const staleSweepInterval = setInterval(() => {
+        const trackedRooms = new Set([...chatHistory.keys(), ...roomHosts.keys()]);
+        for (const roomId of trackedRooms) {
+            const hostId = roomHosts.get(roomId);
+            if (hostId) {
+                const hostSocket = io.sockets.sockets.get(hostId);
+                if (!hostSocket || !hostSocket.connected || !hostSocket.rooms.has(roomId)) {
+                    roomHosts.delete(roomId);
+                }
+            }
+            if (getActiveRoomSize(roomId) === 0 && !cleanupTimers.has(roomId)) {
+                scheduleRoomCleanup(roomId, 15000);
+            }
+        }
+    }, 30000);
+    if (typeof staleSweepInterval.unref === "function") {
+        staleSweepInterval.unref();
+    }
+
     io.on("connection", (socket) => {
         
         // ===================================
@@ -53,7 +132,11 @@ module.exports = (io) => {
             }
             const hostId = roomHosts.get(roomId);
             const hostSocket = hostId ? io.sockets.sockets.get(hostId) : null;
-            callback(Boolean(hostSocket && hostSocket.rooms.has(roomId)));
+            const isHostActive = Boolean(hostSocket && hostSocket.connected && hostSocket.rooms.has(roomId));
+            if (hostId && !isHostActive) {
+                roomHosts.delete(roomId);
+            }
+            callback(isHostActive);
         });
 
         socket.on("join-room", (roomId, role, username) => {
@@ -62,6 +145,13 @@ module.exports = (io) => {
 
             const cleanUsername = typeof username === "string" ? username.slice(0, 50) : "Unknown";
             socket.data.username = cleanUsername;
+
+            // If this socket was previously occupying another room, leave and clean up that previous room first
+            for (const prevRoom of Array.from(socket.rooms)) {
+                if (prevRoom !== socket.id && prevRoom !== roomId) {
+                    handleSocketLeaveRoom(socket, prevRoom, false);
+                }
+            }
 
             // Cancel any pending cleanup timer for this room since a participant is active/rejoining
             if (cleanupTimers.has(roomId)) {
@@ -75,7 +165,7 @@ module.exports = (io) => {
             if (role === "broadcaster") {
                 const existingHostId = roomHosts.get(roomId);
                 const existingHostSocket = existingHostId ? io.sockets.sockets.get(existingHostId) : null;
-                if (existingHostSocket && existingHostSocket.rooms.has(roomId) && existingHostId !== socket.id) {
+                if (existingHostSocket && existingHostSocket.connected && existingHostSocket.rooms.has(roomId) && existingHostId !== socket.id) {
                     // Another active broadcaster is already present in this room.
                     // Demote to viewer to protect single-host broadcast topology.
                     assignedRole = "viewer";
@@ -87,6 +177,7 @@ module.exports = (io) => {
             } else if (roomHosts.get(roomId) === socket.id) {
                 // A host intentionally switched to viewer mode before capture.
                 roomHosts.delete(roomId);
+                socket.to(roomId).emit("host-left", socket.id);
             }
 
             socket.join(roomId);
@@ -97,11 +188,32 @@ module.exports = (io) => {
                 socket.emit("chat-history", chatHistory.get(roomId));
             }
 
-            // Notify others of participant arrival
+            // Notify others of participant arrival & inform joining viewer of active host ID
             if (assignedRole === 'viewer') {
+                const activeHostId = roomHosts.get(roomId);
+                if (activeHostId) {
+                    const activeHostSocket = io.sockets.sockets.get(activeHostId);
+                    if (activeHostSocket && activeHostSocket.connected && activeHostSocket.rooms.has(roomId)) {
+                        socket.emit("host-present", activeHostId);
+                    } else {
+                        roomHosts.delete(roomId);
+                    }
+                }
                 socket.to(roomId).emit("watcher", socket.id, cleanUsername);
             } else if (assignedRole === 'broadcaster') {
                 socket.to(roomId).emit("host-joined", socket.id);
+            }
+        });
+
+        socket.on("leave-room", (roomId) => {
+            if (roomId && isValidRoomId(roomId) && socket.rooms.has(roomId)) {
+                handleSocketLeaveRoom(socket, roomId, false);
+            } else {
+                for (const r of Array.from(socket.rooms)) {
+                    if (r !== socket.id) {
+                        handleSocketLeaveRoom(socket, r, false);
+                    }
+                }
             }
         });
 
@@ -130,40 +242,21 @@ module.exports = (io) => {
             }
         });
 
+        let disconnectingRooms = [];
         socket.on("disconnecting", () => {
-            const userRooms = Array.from(socket.rooms).filter(r => r !== socket.id);
-            for (const roomId of userRooms) {
-                if (isValidRoomId(roomId)) {
-                    socket.to(roomId).emit("disconnectPeer", socket.id);
-                    
-                    if (roomHosts.get(roomId) === socket.id) {
-                        roomHosts.delete(roomId);
-                    }
+            disconnectingRooms = Array.from(socket.rooms).filter(r => r !== socket.id);
+            for (const roomId of disconnectingRooms) {
+                handleSocketLeaveRoom(socket, roomId, true);
+            }
+        });
 
-                    // Memory Management: Clean up chat history if this was the last occupant
-                    const room = io.sockets.adapter.rooms.get(roomId);
-                    if (room && room.size <= 1) { 
-                        // Clear any pre-existing timer to prevent duplicate callbacks or stale closures
-                        if (cleanupTimers.has(roomId)) {
-                            clearTimeout(cleanupTimers.get(roomId));
-                            cleanupTimers.delete(roomId);
-                        }
-                        // Give a 15-second grace period for page refreshes and reconnections
-                        const timer = setTimeout(() => {
-                            const updatedRoom = io.sockets.adapter.rooms.get(roomId);
-                            if (!updatedRoom || updatedRoom.size === 0) {
-                                chatHistory.delete(roomId);
-                                roomHosts.delete(roomId);
-                                cleanupTimers.delete(roomId);
-                                console.log(`[Memory] Cleaned up chat history for empty room: ${roomId}`);
-                            } else {
-                                cleanupTimers.delete(roomId);
-                            }
-                        }, 15000); 
-                        cleanupTimers.set(roomId, timer);
-                    }
+        socket.on("disconnect", () => {
+            for (const roomId of disconnectingRooms) {
+                if (isValidRoomId(roomId) && getActiveRoomSize(roomId) === 0 && !cleanupTimers.has(roomId)) {
+                    scheduleRoomCleanup(roomId, 15000);
                 }
             }
+            disconnectingRooms = [];
         });
 
         // ===================================

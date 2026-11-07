@@ -20,12 +20,12 @@
 
 <body class="bg-red-950 text-white h-screen w-screen overflow-hidden select-none font-sans">
 
-    <!-- Toast Notification Container for Diagnostics & Warnings -->
-    <div id="toastContainer" class="fixed top-6 right-6 z-[120] flex flex-col gap-3 max-w-sm pointer-events-none"></div>
+    <!-- Toast Notification Container for Diagnostics & Warnings (positioned below top UI bar so EXIT is never covered) -->
+    <div id="toastContainer" class="fixed top-20 right-6 z-[120] flex flex-col gap-2.5 max-w-sm pointer-events-none"></div>
 
-    <div id="ui-layer" class="absolute top-0 left-0 w-full z-50 p-6 flex justify-between items-start transition-transform duration-500 ease-in-out">
+    <div id="ui-layer" class="absolute top-0 left-0 w-full z-[65] p-6 flex justify-between items-start transition-transform duration-500 ease-in-out pointer-events-none">
         
-        <div id="copyArea" class="glass-panel rounded-full px-5 py-2 flex items-center gap-4 cursor-pointer hover:bg-white/10 transition-all group active:scale-95">
+        <div id="copyArea" class="pointer-events-auto glass-panel rounded-full px-5 py-2 flex items-center gap-4 cursor-pointer hover:bg-white/10 transition-all group active:scale-95">
             <div class="flex items-center gap-2">
                 <span class="w-2.5 h-2.5 rounded-full bg-red-500 live-pulse"></span>
                 <span class="text-[10px] font-bold text-slate-300 tracking-widest uppercase">Live</span>
@@ -39,7 +39,7 @@
             <svg class="w-4 h-4 text-slate-400 hidden group-hover:block animate-fade-in" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"></path></svg>
         </div>
 
-        <a href="/" class="glass-panel px-4 py-2 rounded-full text-xs font-bold text-slate-300 hover:text-white hover:bg-red-500/20 hover:border-red-500/50 transition-all flex items-center gap-2 active:scale-95">
+        <a id="exitBtn" href="/" class="pointer-events-auto glass-panel px-4 py-2 rounded-full text-xs font-bold text-slate-300 hover:text-white hover:bg-red-500/20 hover:border-red-500/50 transition-all flex items-center gap-2 active:scale-95">
             <span>EXIT</span>
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
         </a>
@@ -145,40 +145,40 @@
                 </div>
             </button>
 
-            <button id="nightBtn" class="shrink-0 group p-2 sm:p-3 rounded-2xl text-indigo-300/80 hover:text-indigo-200 hover:bg-indigo-950/40 border border-transparent hover:border-indigo-400/20 active:scale-90 transition-all duration-300 ease-out hidden hover:shadow-[0_0_15px_rgba(99,102,241,0.15)]">
+            <button id="nightBtn" type="button" class="shrink-0 group p-2 sm:p-3 rounded-2xl text-indigo-300/80 hover:text-indigo-200 hover:bg-indigo-950/40 border border-transparent hover:border-indigo-400/20 active:scale-90 transition-all duration-300 ease-out hidden hover:shadow-[0_0_15px_rgba(99,102,241,0.15)]">
                 <div class="flex flex-col items-center gap-1">
                     <svg class="w-6 h-6 transform group-active:-rotate-12 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path></svg>
-                    <span class="text-[9px] font-medium tracking-widest uppercase">Cozy</span>
+                    <span id="nightStatus" class="text-[9px] font-medium tracking-widest uppercase">Cozy</span>
                 </div>
             </button>
 
             <div class="shrink-0 w-px h-8 bg-rose-900/40 hidden md:block"></div>
 
-            <button id="spatialBtn" class="shrink-0 group p-2 sm:p-3 rounded-2xl text-teal-400/80 hover:text-teal-300 hover:bg-teal-950/40 border border-transparent hover:border-teal-400/20 active:scale-90 transition-all duration-300 ease-out hidden hover:shadow-[0_0_15px_rgba(20,184,166,0.15)]">
+            <button id="spatialBtn" type="button" class="shrink-0 group p-2 sm:p-3 rounded-2xl text-teal-400/80 hover:text-teal-300 hover:bg-teal-950/40 border border-transparent hover:border-teal-400/20 active:scale-90 transition-all duration-300 ease-out hidden hover:shadow-[0_0_15px_rgba(20,184,166,0.15)]">
                 <div class="flex flex-col items-center gap-1">
                     <span class="text-[18px] leading-none mt-1 transform group-active:scale-110 transition-transform">✨</span>
                     <span id="spatialStatus" class="text-[9px] font-medium tracking-widest uppercase">Glow: ON</span>
                 </div>
             </button>
 
-            <button id="pipBtn" class="shrink-0 group p-2 sm:p-3 rounded-2xl text-rose-300/50 hover:text-rose-100 hover:bg-rose-950/40 border border-transparent hover:border-rose-400/20 active:scale-90 transition-all duration-300 ease-out hidden hover:shadow-[0_0_15px_rgba(225,29,72,0.15)]">
+            <button id="pipBtn" type="button" class="shrink-0 group p-2 sm:p-3 rounded-2xl text-rose-300/50 hover:text-rose-100 hover:bg-rose-950/40 border border-transparent hover:border-rose-400/20 active:scale-90 transition-all duration-300 ease-out hidden hover:shadow-[0_0_15px_rgba(225,29,72,0.15)]">
                 <div class="flex flex-col items-center gap-1">
                     <svg class="w-6 h-6 transform group-active:scale-110 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2" ry="2" stroke-width="1.5"/><rect x="12" y="12" width="6" height="4" rx="1" stroke-width="1.5"/></svg>
                     <span class="text-[9px] font-medium tracking-widest uppercase">PiP</span>
                 </div>
             </button>
 
-            <button id="syncBtn" class="shrink-0 group p-2 sm:p-3 rounded-2xl text-rose-400 hover:text-rose-200 hover:bg-rose-950/40 border border-transparent hover:border-rose-400/20 active:scale-90 transition-all duration-300 ease-out hidden hover:shadow-[0_0_15px_rgba(225,29,72,0.15)]">
+            <button id="syncBtn" type="button" class="shrink-0 group p-2 sm:p-3 rounded-2xl text-rose-400 hover:text-rose-200 hover:bg-rose-950/40 border border-transparent hover:border-rose-400/20 active:scale-90 transition-all duration-300 ease-out hidden hover:shadow-[0_0_15px_rgba(225,29,72,0.15)]">
                 <div class="flex flex-col items-center gap-1">
                     <svg class="w-6 h-6 transform group-active:rotate-180 transition-transform duration-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                     <span class="text-[9px] font-medium tracking-widest uppercase text-rose-300">Sync</span>
                 </div>
             </button>
 
-            <button id="fsBtn" class="shrink-0 group p-2 sm:p-3 rounded-2xl text-rose-300/60 hover:text-white hover:bg-rose-950/40 border border-transparent hover:border-rose-400/20 active:scale-90 transition-all duration-300 ease-out hover:shadow-[0_0_15px_rgba(225,29,72,0.15)]">
+            <button id="fsBtn" type="button" class="shrink-0 group p-2 sm:p-3 rounded-2xl text-rose-300/60 hover:text-white hover:bg-rose-950/40 border border-transparent hover:border-rose-400/20 active:scale-90 transition-all duration-300 ease-out hover:shadow-[0_0_15px_rgba(225,29,72,0.15)]">
                 <div class="flex flex-col items-center gap-1">
                     <svg class="w-6 h-6 transform group-active:scale-125 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"></path></svg>
-                    <span class="text-[9px] font-medium tracking-widest uppercase">Full</span>
+                    <span id="fsStatus" class="text-[9px] font-medium tracking-widest uppercase">Full</span>
                 </div>
             </button>
 
@@ -372,6 +372,9 @@
                 toast.remove();
             };
 
+            while (container.children.length >= 5) {
+                container.firstElementChild.remove();
+            }
             container.appendChild(toast);
 
             timeoutId = setTimeout(() => {
@@ -389,24 +392,82 @@
         
         // --- 4. INTERACTIONS ---
         
-        // Copy Code Logic
+        // Copy Code Logic (with non-HTTPS mobile fallback & toast confirmation)
         document.getElementById('copyArea').onclick = async () => {
+            let copied = false;
             try {
                 if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
                     await navigator.clipboard.writeText(roomId);
+                    copied = true;
                 }
             } catch (e) {
-                console.warn("[UI] Clipboard write failed:", e);
+                console.warn("[UI] Clipboard API write failed; trying execCommand fallback:", e);
+            }
+            if (!copied) {
+                try {
+                    const tempInput = document.createElement('textarea');
+                    tempInput.value = roomId;
+                    tempInput.style.position = 'fixed';
+                    tempInput.style.opacity = '0';
+                    document.body.appendChild(tempInput);
+                    tempInput.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(tempInput);
+                    copied = true;
+                } catch (fallbackErr) {}
             }
             const originalColor = roomDisplay.style.color;
             roomDisplay.style.color = "#4ade80"; // Turn Green
             setTimeout(() => roomDisplay.style.color = originalColor, 500);
+            showToast(`📋 Room code copied: ${roomId}`, "info", 2500);
         };
 
+        // Clean Room Exit & Mobile BFCache Teardown (prevents stale rooms when Host/Viewers leave)
+        let hasLeftRoom = false;
+        const leaveRoomCleanly = (disconnectNow = false) => {
+            if (hasLeftRoom) return;
+            hasLeftRoom = true;
+            try {
+                if (typeof window.stopBroadcast === 'function' && window.broadcaster && window.broadcaster.stream) {
+                    window.stopBroadcast('room_exit');
+                }
+                if (typeof window.cleanupViewerSession === 'function') {
+                    window.cleanupViewerSession();
+                }
+                if (socket && socket.connected) {
+                    socket.emit('leave-room', roomId);
+                    if (disconnectNow) {
+                        socket.disconnect();
+                    }
+                }
+            } catch (e) {}
+        };
+        const exitBtn = document.getElementById('exitBtn');
+        if (exitBtn) {
+            exitBtn.onclick = (e) => {
+                e.preventDefault();
+                leaveRoomCleanly(true);
+                window.location.href = '/';
+            };
+        }
+        window.addEventListener('pagehide', () => leaveRoomCleanly(false));
+
         // Cross-Platform Fullscreen / Theater Mode
+        const fsStatus = document.getElementById('fsStatus');
+        const syncFullscreenButtonUI = () => {
+            const isFs = Boolean(
+                document.fullscreenElement ||
+                document.webkitFullscreenElement ||
+                document.body.classList.contains('theater-fullscreen')
+            );
+            if (fsStatus) fsStatus.innerText = isFs ? 'Exit' : 'Full';
+        };
+        document.addEventListener('fullscreenchange', syncFullscreenButtonUI);
+        document.addEventListener('webkitfullscreenchange', syncFullscreenButtonUI);
         document.getElementById('fsBtn').onclick = (e) => {
             e.stopPropagation();
             toggleFullScreen(document.documentElement);
+            setTimeout(syncFullscreenButtonUI, 100);
         };
 
         // UI Auto-Hide Logic
@@ -419,7 +480,7 @@
             
             clearTimeout(fadeTimeout);
             fadeTimeout = setTimeout(() => {
-                if (chatPanel.classList.contains('translate-x-full')) { 
+                if (chatPanel.classList.contains('translate-x-full') && curtain.classList.contains('hidden')) { 
                     uiLayer.classList.add('-translate-y-full');
                     controls.classList.add('translate-y-[200%]');
                     reactionBar.classList.add('translate-x-[200%]');
@@ -427,6 +488,7 @@
                 }
             }, 3500);
         };
+        window.showUI = showUI;
         
         document.body.addEventListener('mousemove', showUI);
         document.body.addEventListener('touchstart', showUI);
@@ -533,15 +595,29 @@
         window.renderMessage = renderMessage;
 
         // Socket Listeners (Chat)
+        let resolveInitialSync = null;
+        const initialRoomSyncReady = new Promise(resolve => {
+            resolveInitialSync = resolve;
+            setTimeout(resolve, 350);
+        });
+
         socket.on('chat-history', (history) => {
             if (!Array.isArray(history)) return;
             Array.from(chatMessages.children).forEach(el => {
                 if (el.id !== 'chatEmptyState') el.remove();
             });
             history.forEach(msg => renderMessage(msg));
+            if (!username && resolveInitialSync) {
+                resolveInitialSync();
+                resolveInitialSync = null;
+            }
         });
         socket.on('chat-message', (msg) => {
             renderMessage(msg);
+            if (resolveInitialSync && msg && msg.user === 'System') {
+                resolveInitialSync();
+                resolveInitialSync = null;
+            }
             if (chatPanel.classList.contains('translate-x-full')) {
                 chatBadge.classList.remove('hidden');
                 // Reveal auto-hidden toolbar when a partner sends a chat message so the badge is visible
@@ -650,19 +726,27 @@
             spatialBtn.classList.toggle('text-slate-400', !isGlowActive);
         };
 
-        // --- PICTURE-IN-PICTURE (PiP) LOGIC ---
+        // --- PICTURE-IN-PICTURE (PiP) LOGIC (Standard + Safari WebKit Fallback) ---
         document.getElementById('pipBtn').onclick = async (e) => {
             e.stopPropagation();
             try {
                 if (document.pictureInPictureElement) {
                     await document.exitPictureInPicture();
+                } else if (typeof video.webkitSupportsPresentationMode === 'function' && video.webkitSupportsPresentationMode('picture-in-picture')) {
+                    const nextMode = video.webkitPresentationMode === 'picture-in-picture' ? 'inline' : 'picture-in-picture';
+                    video.webkitSetPresentationMode(nextMode);
                 } else if (video.requestPictureInPicture) {
+                    if (!video.srcObject || video.readyState < 1) {
+                        showToast("Start or join an active video stream before entering Picture-in-Picture.", "info", 4000);
+                        return;
+                    }
                     await video.requestPictureInPicture();
                 } else {
-                    showToast("Picture-in-Picture is not supported on this browser version.", "warning");
+                    showToast("Picture-in-Picture is not supported on this browser.", "warning", 4000);
                 }
             } catch (err) {
-                console.error("PiP Error:", err);
+                console.warn("PiP Error:", err);
+                showToast("Wait for video playback to begin before entering Picture-in-Picture.", "info", 4000);
             }
         };
 
@@ -763,12 +847,68 @@
                 e.stopPropagation();
                 viewerVolumeIndex = (viewerVolumeIndex + 1) % volumeSteps.length;
                 const step = volumeSteps[viewerVolumeIndex];
-                video.muted = step.muted;
+                video._userExplicitlyMuted = step.muted;
+                const aecPlayer = document.getElementById('viewerAecPlayer');
+                if (aecPlayer) {
+                    // When Cozy dialogue compressor is active, keep videoElement muted to avoid dual audio and mute/unmute aecPlayer instead
+                    video.muted = true;
+                    aecPlayer.muted = step.muted;
+                    aecPlayer.volume = step.vol;
+                } else {
+                    video.muted = step.muted;
+                }
                 video.volume = step.vol;
                 if (volumeIcon) volumeIcon.innerText = step.icon;
                 if (volumeStatus) volumeStatus.innerText = step.label;
             };
         }
+
+        // --- PRE-INIT COZY (NIGHT MODE) BUTTON FALLBACK ---
+        const nightStatus = document.getElementById('nightStatus');
+        if (nightBtn) {
+            nightBtn.onclick = (e) => {
+                e.stopPropagation();
+                window.nightModeActive = !window.nightModeActive;
+                if (window.nightModeActive) {
+                    nightBtn.classList.remove('text-indigo-300/80', 'text-indigo-400', 'border-transparent');
+                    nightBtn.classList.add('text-white', 'bg-indigo-600/50', 'border-indigo-400/40', 'animate-pulse');
+                    if (nightStatus) nightStatus.innerText = 'Cozy: ON';
+                    showToast("🌙 Cozy Mode ON: Armed — dialogue boost will apply automatically when movie audio plays.", "info", 4000);
+                } else {
+                    nightBtn.classList.remove('text-white', 'bg-indigo-600/50', 'border-indigo-400/40', 'animate-pulse');
+                    nightBtn.classList.add('text-indigo-300/80', 'border-transparent');
+                    if (nightStatus) nightStatus.innerText = 'Cozy';
+                    showToast("🌙 Cozy Mode OFF: Standard cinema dynamic range restored.", "info", 4000);
+                }
+            };
+        }
+
+        // --- PRE-CURTAIN HOST DISCONNECT GUARD (Prevents viewers sitting on curtain from holding headless rooms open) ---
+        let preCurtainHostTimer = null;
+        socket.on('host-left', () => {
+            if (role !== 'viewer' || window.viewer) return; // Once viewer.js init() runs, viewer.js owns the 15s grace timer
+            if (preCurtainHostTimer) clearTimeout(preCurtainHostTimer);
+            showToast("Host left the room. Waiting up to 15s for Host to reconnect...", "warning", 6000);
+            preCurtainHostTimer = setTimeout(() => {
+                preCurtainHostTimer = null;
+                if (role === 'viewer' && !window.viewer) {
+                    showToast("The Host has ended the session.", "info", 3000);
+                    setTimeout(() => {
+                        leaveRoomCleanly();
+                        window.location.href = '/';
+                    }, 1000);
+                }
+            }, 15000);
+        });
+        socket.on('host-joined', () => {
+            if (preCurtainHostTimer) {
+                clearTimeout(preCurtainHostTimer);
+                preCurtainHostTimer = null;
+                if (role === 'viewer' && !window.viewer) {
+                    showToast("Host reconnected to the theater!", "info", 4000);
+                }
+            }
+        });
 
         // --- HOST STOP / SWITCH STREAM BUTTON ---
         if (stopStreamBtn) {
@@ -852,6 +992,7 @@
             micBtn.classList.remove('hidden');
             if (animeBtn) animeBtn.classList.remove('hidden');
             if (sep) sep.classList.remove('hidden');
+            if (pipBtn) pipBtn.classList.remove('hidden');
             syncBtn.classList.remove('hidden');
             spatialBtn.classList.remove('hidden');
 
@@ -943,7 +1084,11 @@
                         const newFacing = await window.flipHostCamera();
                         if (newFacing && flipCameraStatus) {
                             flipCameraStatus.innerText = newFacing === 'environment' ? 'Rear' : 'Front';
+                        } else if (!newFacing) {
+                            showToast("Could not switch camera (this device may only have one accessible camera).", "warning", 4000);
                         }
+                    } else {
+                        showToast("Start the Live Camera broadcast first to flip between Front and Rear cameras.", "info", 4000);
                     }
                 };
             }
@@ -988,13 +1133,18 @@
                     micBtn.classList.add("text-slate-400");
                 }
             };
-            micBtn.onclick = async () => {
+            micBtn.onclick = async (e) => {
+                if (e) e.stopPropagation();
                 if (window.toggleHostMic) {
                     const shouldEnable = isHostMuted; 
                     const success = await window.toggleHostMic(shouldEnable); 
                     if (success) {
                         syncHostMicUI(shouldEnable);
+                    } else {
+                        showToast("Could not access microphone. Please check browser microphone permissions.", "warning", 4000);
                     }
+                } else {
+                    showToast("Start your broadcast first to activate the Host microphone.", "info", 4000);
                 }
             };
 
@@ -1050,7 +1200,9 @@
                                 selectedVideoFile = null;
                                 if (videoFileInput) videoFileInput.value = '';
                                 if (stopStreamBtn) stopStreamBtn.classList.add('hidden');
+                                syncHostMicUI(false);
                                 curtain.classList.remove('hidden', 'pointer-events-none', 'opacity-0');
+                                showUI();
                                 updateHostModeUI(activeHostMode);
                                 showToast("Broadcast session ended.", "info", 5000);
                             }
@@ -1063,14 +1215,23 @@
                         setTimeout(() => curtain.classList.add('hidden'), 700);
                     } catch (e) {
                         selectedVideoFile = null;
-                        updateHostModeUI(activeHostMode);
-                        if (e && e.reason === 'cancelled') {
-                            console.log("[Room] Screen capture cancelled by user. Ready to retry.");
-                            showToast(getCapabilityDiagnostics('cancelled'), 'info', 4000);
+                        if (activeHostMode === 'screen' && e && e.reason === 'unsupported') {
+                            console.warn("[Room] Screen capture unsupported at runtime; switching Host UI to Video File fallback mode.");
+                            if (modeScreenBtn) {
+                                modeScreenBtn.classList.add('opacity-40', 'cursor-not-allowed');
+                            }
+                            updateHostModeUI('file');
+                            showToast("Screen sharing is unavailable on this mobile browser. Switched to Video File mode — tap to select a video or choose Live Camera!", 'warning', 8000);
                         } else {
-                            console.error("[Room] Broadcast start error:", e);
-                            const reason = e?.reason || 'failed';
-                            showToast(getCapabilityDiagnostics(reason, { message: e?.message }), 'error', 8000);
+                            updateHostModeUI(activeHostMode);
+                            if (e && e.reason === 'cancelled') {
+                                console.log("[Room] Screen capture cancelled by user. Ready to retry.");
+                                showToast(getCapabilityDiagnostics('cancelled'), 'info', 4000);
+                            } else {
+                                console.error("[Room] Broadcast start error:", e);
+                                const reason = e?.reason || 'failed';
+                                showToast(getCapabilityDiagnostics(reason, { message: e?.message }), 'error', 8000);
+                            }
                         }
                     }
                 };
@@ -1088,10 +1249,17 @@
             syncBtn.classList.remove('hidden');
             spatialBtn.classList.remove('hidden');
 
+            let pendingViewerStart = false;
+            startBtn.onclick = () => {
+                pendingViewerStart = true;
+                btnLabel.innerText = "JOINING...";
+            };
+
             import('./js/viewer.js').then(module => {
-                btnLabel.innerText = "JOIN MOVIE";
-                if (btnIcon) btnIcon.innerText = "🍿";
-                startBtn.onclick = () => {
+                let viewerSessionStarted = false;
+                const startViewerSession = () => {
+                    if (viewerSessionStarted) return;
+                    viewerSessionStarted = true;
                     // Cinematic Reveal
                     curtain.classList.add('opacity-0', 'pointer-events-none');
                     setTimeout(() => curtain.classList.add('hidden'), 700);
@@ -1099,6 +1267,16 @@
                     // [CRITICAL] Passing shared socket and username
                     module.init(roomId, video, socket, username);
                 };
+                startBtn.onclick = startViewerSession;
+                if (pendingViewerStart) {
+                    startViewerSession();
+                }
+                initialRoomSyncReady.then(() => {
+                    if (!viewerSessionStarted) {
+                        btnLabel.innerText = "JOIN MOVIE";
+                        if (btnIcon) btnIcon.innerText = "🍿";
+                    }
+                });
             });
         }
     </script>
