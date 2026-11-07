@@ -283,6 +283,15 @@ module.exports = (io) => {
             targetSocket.emit("candidate", socket.id, message);
         });
 
+        socket.on("intercom-state", (id, payload) => {
+            if (typeof id !== "string" || !payload || typeof payload !== "object") return;
+            const targetSocket = io.sockets.sockets.get(id);
+            if (!targetSocket || !sharesCommonRoom(socket, targetSocket)) return;
+            targetSocket.emit("intercom-state", socket.id, {
+                active: Boolean(payload.active)
+            });
+        });
+
         // ===================================
         // 5. CHAT FEATURE (With History)
         // ===================================

@@ -176,18 +176,22 @@ function clearViewerWatchdogs() {
 
 function ensureViewerAudioPlays(audioEl, duckCtrl) {
     if (!audioEl) return;
+    audioEl.muted = false;
+    if (typeof audioEl.volume === 'number' && audioEl.volume === 0) {
+        audioEl.volume = 1.0;
+    }
+    if (duckCtrl && typeof duckCtrl.resumeContext === 'function') {
+        duckCtrl.resumeContext();
+    }
     const playPromise = audioEl.play();
     if (playPromise && typeof playPromise.catch === 'function') {
         playPromise.catch((err) => {
             console.warn("[Audio] Host voice playout deferred by browser policy; binding interaction unlock:", err);
             const unlock = () => {
+                audioEl.muted = false;
                 audioEl.play().catch(() => {});
-                if (duckCtrl && duckCtrl.speakers) {
-                    duckCtrl.speakers.forEach(rec => {
-                        if (rec.audioCtx && rec.audioCtx.state !== 'running') {
-                            rec.audioCtx.resume().catch(() => {});
-                        }
-                    });
+                if (duckCtrl && typeof duckCtrl.resumeContext === 'function') {
+                    duckCtrl.resumeContext();
                 }
                 document.removeEventListener('click', unlock);
                 document.removeEventListener('touchstart', unlock);
@@ -198,6 +202,28 @@ function ensureViewerAudioPlays(audioEl, duckCtrl) {
             document.addEventListener('keydown', unlock, { once: true });
         });
     }
+}
+
+function claimOrCreateHostVoicePlayer(playerId) {
+    let player = document.getElementById(playerId);
+    if (player) return player;
+    if (typeof window !== 'undefined' && Array.isArray(window._blessedVoicePlayers) && window._blessedVoicePlayers.length > 0) {
+        player = window._blessedVoicePlayers.pop();
+    }
+    if (!player) {
+        player = new Audio();
+    }
+    player.id = playerId;
+    player.autoplay = true;
+    player.playsInline = true;
+    player.muted = false;
+    player.volume = 1.0;
+    player.setAttribute('playsinline', '');
+    player.setAttribute('webkit-playsinline', '');
+    if (!player.parentNode && document.body) {
+        document.body.appendChild(player);
+    }
+    return player;
 }
 
 function displayNotification(message, type = 'info') {
@@ -229,6 +255,7 @@ export async function init(roomId, videoElement, socket, username) {
         thresholdRms: 0.02,
         silenceDelayMs: 1200
     });
+    duckingController.resumeContext();
 
     // Expose diagnostics helper on window for debugging & testing
     window.viewerAudioDiagnostics = () => getAudioDiagnostics(peerConnection);
@@ -456,6 +483,9 @@ export async function init(roomId, videoElement, socket, username) {
                 }
             }
         }
+        if (hostId && socket && socket.connected) {
+            socket.emit("intercom-state", hostId, { active: false });
+        }
 
         // UI Updates
         if (micStatus) {
@@ -475,6 +505,9 @@ export async function init(roomId, videoElement, socket, username) {
             isMicToggling = true;
 
             try {
+                if (duckingController) {
+                    duckingController.resumeContext();
+                }
                 if (isMuted) {
                     // Activating microphone
                     console.log("[Mic] Requesting Voice Intercom access...");
@@ -519,11 +552,17 @@ export async function init(roomId, videoElement, socket, username) {
                         // Locate the voice intercom transceiver (sendrecv in screen mode, sendonly in camera mode)
                         const voiceTransceiver = intercomTransceiverRef || peerConnection.getTransceivers().find(
                             t => t.direction === 'sendrecv' || t.direction === 'sendonly' ||
-                                 t.currentDirection === 'sendrecv' || t.currentDirection === 'sendonly'
+                                 t.currentDirection === 'sendrecv' || t.currentDirection === 'sendonly' ||
+                                 (t.receiver && t.receiver.track && t.receiver.track.kind === 'audio' && t.direction !== 'recvonly')
                         );
                         
                         if (voiceTransceiver && voiceTransceiver.sender) {
                             console.log("[Mic] Replacing silence track with Mic audio...");
+                            if (voiceTransceiver.direction === 'recvonly') {
+                                voiceTransceiver.direction = 'sendrecv';
+                            } else if (voiceTransceiver.direction === 'inactive') {
+                                voiceTransceiver.direction = 'sendonly';
+                            }
                             await voiceTransceiver.sender.replaceTrack(audioTrack);
                         } else {
                             console.warn("[Mic] No existing voice intercom transceiver found on peer connection.");
@@ -534,6 +573,10 @@ export async function init(roomId, videoElement, socket, username) {
                     micStatus.innerText = "Active";
                     micBtn.classList.add("text-white");
                     isMuted = false;
+
+                    if (hostId && socket && socket.connected) {
+                        socket.emit("intercom-state", hostId, { active: true });
+                    }
 
                     if (window._viewerMicCtrl) window._viewerMicCtrl.destroy();
                     window._viewerMicCtrl = setupLocalMicMonitor(audioTrack, (isSpeaking) => {
@@ -757,6 +800,39 @@ export async function init(roomId, videoElement, socket, username) {
         }, 6000);
     };
     
+    const bindHostVoiceTrack = (track, { forceRefresh = false } = {}) => {
+        if (!track || track.kind !== 'audio') return;
+        const voicePlayer = claimOrCreateHostVoicePlayer(`hostVoice_${hostId}`);
+        const currentTracks = (voicePlayer.srcObject && typeof voicePlayer.srcObject.getTracks === 'function')
+            ? voicePlayer.srcObject.getTracks()
+            : [];
+        if (forceRefresh || !currentTracks.includes(track) || voicePlayer.paused) {
+            voicePlayer.srcObject = new MediaStream([track]);
+        }
+        ensureViewerAudioPlays(voicePlayer, duckingController);
+
+        if (duckingController) {
+            duckingController.registerVoiceTrack('host', track, null, voicePlayer);
+        }
+
+        if (!track._streamyBound) {
+            track._streamyBound = true;
+            track.addEventListener('unmute', () => {
+                bindHostVoiceTrack(track, { forceRefresh: true });
+            });
+            track.addEventListener('ended', () => {
+                if (duckingController) {
+                    duckingController.unregisterVoiceTrack('host', track);
+                }
+                const p = document.getElementById(`hostVoice_${hostId}`);
+                if (p && p.srcObject && typeof p.srcObject.getTracks === 'function') {
+                    if (!p.srcObject.getTracks().includes(track)) return;
+                }
+                if (p && p.parentNode) p.parentNode.removeChild(p);
+            });
+        }
+    };
+
     // Handle WebRTC Offer from Broadcaster
     socket.off("offer");
     socket.on("offer", async (id, description) => {
@@ -775,24 +851,50 @@ export async function init(roomId, videoElement, socket, username) {
         }
         scheduleViewerHandshakeWatchdog();
 
-        // Fast-path: In-place ICE Restart on existing stable connection with same Host
-        // Only used when the existing PC already established media and is not forcing a clean decoder reset
+        // Identify the Intercom media section from the Offer SDP:
+        // Programme Audio is offered as 'sendonly'; Voice Intercom is offered as 'sendrecv' (screen mode) or 'recvonly' (camera mode).
+        const { mediaSections } = parseSDPSections(description.sdp);
+        const intercomSection = mediaSections.find(
+            s => s.mediaType === 'audio' && (s.direction === 'sendrecv' || s.direction === 'recvonly')
+        );
+        const intercomMid = intercomSection ? intercomSection.mid : null;
+        const intercomSectionIdx = intercomSection ? mediaSections.indexOf(intercomSection) : -1;
+
+        // Fast-path: In-place SDP renegotiation / ICE Restart on existing connection with same Host
         const existingIce = peerConnection ? peerConnection.iceConnectionState : 'closed';
         const canRestartInPlace = Boolean(
             !forceFreshPeerConnection &&
             peerConnection &&
             hostId === id &&
             peerConnection.signalingState === 'stable' &&
-            (existingIce === 'connected' || existingIce === 'completed' || existingIce === 'disconnected') &&
-            videoElement && videoElement.srcObject && videoElement.readyState >= 2
+            existingIce !== 'failed' &&
+            existingIce !== 'closed'
         );
 
         if (canRestartInPlace) {
             const existingPc = peerConnection;
             try {
-                console.log("[WebRTC] Performing seamless in-place ICE restart with Host...");
+                console.log("[WebRTC] Performing seamless in-place SDP / ICE update with Host...");
                 await existingPc.setRemoteDescription(description);
                 if (peerConnection !== existingPc || offerGeneration !== currentGen) return;
+
+                const transceivers = existingPc.getTransceivers();
+                intercomTransceiverRef = (intercomMid && transceivers.find(t => t.mid === intercomMid)) ||
+                    (intercomSectionIdx >= 0 && transceivers[intercomSectionIdx]) ||
+                    intercomTransceiverRef ||
+                    null;
+
+                if (intercomTransceiverRef) {
+                    intercomTransceiverRef.direction = (intercomSection && intercomSection.direction === 'recvonly') ? 'sendonly' : 'sendrecv';
+                    const activeMicTrack = (!isMuted && localAudioStream) ? (localAudioStream.getAudioTracks()[0] || null) : null;
+                    if (intercomTransceiverRef.sender && intercomTransceiverRef.sender.track !== activeMicTrack) {
+                        await intercomTransceiverRef.sender.replaceTrack(activeMicTrack);
+                        if (peerConnection !== existingPc || offerGeneration !== currentGen) return;
+                    }
+                    if (intercomSection && intercomSection.direction === 'sendrecv' && intercomTransceiverRef.receiver && intercomTransceiverRef.receiver.track) {
+                        bindHostVoiceTrack(intercomTransceiverRef.receiver.track);
+                    }
+                }
 
                 const restartAnswer = await existingPc.createAnswer();
                 if (peerConnection !== existingPc || offerGeneration !== currentGen) return;
@@ -800,7 +902,7 @@ export async function init(roomId, videoElement, socket, username) {
                 await existingPc.setLocalDescription(restartAnswer);
                 if (peerConnection !== existingPc || offerGeneration !== currentGen) return;
 
-                await waitForInitialCandidates(existingPc, 80);
+                await waitForInitialCandidates(existingPc, 60);
                 if (peerConnection !== existingPc || offerGeneration !== currentGen) return;
 
                 isApplyingOffer = false;
@@ -809,7 +911,7 @@ export async function init(roomId, videoElement, socket, username) {
                 safePlayViewerVideo();
                 return;
             } catch (inPlaceErr) {
-                console.warn("[WebRTC] In-place ICE restart failed; falling back to fresh RTCPeerConnection:", inPlaceErr);
+                console.warn("[WebRTC] In-place SDP / ICE update failed; falling back to fresh RTCPeerConnection:", inPlaceErr);
                 if (peerConnection !== existingPc || offerGeneration !== currentGen) return;
             }
         }
@@ -843,15 +945,6 @@ export async function init(roomId, videoElement, socket, username) {
         
         const activePc = new RTCPeerConnection(rtcConfiguration);
         peerConnection = activePc;
-
-        // Identify the Intercom media section from the Offer SDP before setRemoteDescription:
-        // Programme Audio is offered as 'sendonly'; Voice Intercom is offered as 'sendrecv' (screen mode) or 'recvonly' (camera mode).
-        const { mediaSections } = parseSDPSections(description.sdp);
-        const intercomSection = mediaSections.find(
-            s => s.mediaType === 'audio' && (s.direction === 'sendrecv' || s.direction === 'recvonly')
-        );
-        const intercomMid = intercomSection ? intercomSection.mid : null;
-        const intercomSectionIdx = intercomSection ? mediaSections.indexOf(intercomSection) : -1;
 
         // Discrete Incoming Stream Routing
         activePc.ontrack = event => {
@@ -912,46 +1005,7 @@ export async function init(roomId, videoElement, socket, username) {
             // Voice Component (Bi-directional Host Intercom)
             else if (event.track.kind === 'audio') {
                 console.log("[Audio] Routing Host Voice to DOM-mounted player for platform AEC...");
-                let voicePlayer = document.getElementById(`hostVoice_${hostId}`);
-                if (!voicePlayer) {
-                    voicePlayer = new Audio();
-                    voicePlayer.id = `hostVoice_${hostId}`;
-                    voicePlayer.autoplay = true;
-                    voicePlayer.playsInline = true;
-                    voicePlayer.setAttribute('playsinline', '');
-                    voicePlayer.setAttribute('webkit-playsinline', '');
-                    // Native AEC requirement: MUST append to DOM for Chromium / WebKit AEC routing
-                    document.body.appendChild(voicePlayer);
-                }
-                voicePlayer.srcObject = new MediaStream([event.track]);
-                ensureViewerAudioPlays(voicePlayer, duckingController);
-
-                // Register Host voice with DuckingController to duck movie audio during Host speech
-                if (duckingController) {
-                    duckingController.registerVoiceTrack('host', event.track);
-                }
-
-                // When Host unmutes mid-session via replaceTrack(), RTP packets begin flowing and 'unmute' fires
-                event.track.addEventListener('unmute', () => {
-                    const p = document.getElementById(`hostVoice_${hostId}`);
-                    if (p) {
-                        ensureViewerAudioPlays(p, duckingController);
-                    }
-                    if (duckingController && duckingController.speakers) {
-                        const rec = duckingController.speakers.get('host');
-                        if (rec && rec.audioCtx && rec.audioCtx.state !== 'running') {
-                            rec.audioCtx.resume().catch(() => {});
-                        }
-                    }
-                });
-
-                event.track.addEventListener('ended', () => {
-                    if (duckingController) {
-                        duckingController.unregisterVoiceTrack('host');
-                    }
-                    const p = document.getElementById(`hostVoice_${hostId}`);
-                    if (p && p.parentNode) p.parentNode.removeChild(p);
-                });
+                bindHostVoiceTrack(event.track);
             }
         };
 
@@ -1078,6 +1132,23 @@ export async function init(roomId, videoElement, socket, username) {
                 .catch(e => console.warn("[ICE] Error adding candidate:", e));
         } else {
             pendingCandidates.push({ id, candidate, ts: Date.now() });
+        }
+    });
+
+    socket.off("intercom-state");
+    socket.on("intercom-state", (fromHostId, payload) => {
+        if (!payload || (hostId && fromHostId !== hostId)) return;
+        if (duckingController) {
+            duckingController.resumeContext();
+        }
+        if (payload.active && peerConnection) {
+            const voiceTransceiver = intercomTransceiverRef || peerConnection.getTransceivers().find(
+                t => t.direction === 'sendrecv' || t.direction === 'sendonly' ||
+                     t.currentDirection === 'sendrecv' || t.currentDirection === 'sendonly'
+            );
+            if (voiceTransceiver && voiceTransceiver.receiver && voiceTransceiver.receiver.track) {
+                bindHostVoiceTrack(voiceTransceiver.receiver.track, { forceRefresh: true });
+            }
         }
     });
 

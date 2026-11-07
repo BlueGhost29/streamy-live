@@ -925,6 +925,30 @@
             };
         }
 
+        function preblessVoiceAudioElements(count = 2) {
+            try {
+                if (!Array.isArray(window._blessedVoicePlayers)) {
+                    window._blessedVoicePlayers = [];
+                }
+                while (window._blessedVoicePlayers.length < count) {
+                    const a = new Audio();
+                    a.autoplay = true;
+                    a.playsInline = true;
+                    a.muted = false;
+                    a.volume = 1.0;
+                    a.setAttribute('playsinline', '');
+                    a.setAttribute('webkit-playsinline', '');
+                    if (document.body) {
+                        document.body.appendChild(a);
+                    }
+                    const p = a.play();
+                    if (p && typeof p.catch === 'function') p.catch(() => {});
+                    window._blessedVoicePlayers.push(a);
+                }
+            } catch (e) {}
+        }
+        window.preblessVoiceAudioElements = preblessVoiceAudioElements;
+
         // Helper: Switch dynamically from Host to Viewer mode without reloading
         function switchToViewerMode(options = {}) {
             const { alreadyDemotedOnServer = false } = options;
@@ -974,6 +998,7 @@
                     curtain.classList.add('opacity-0', 'pointer-events-none');
                     setTimeout(() => curtain.classList.add('hidden'), 700);
                     video.muted = false;
+                    preblessVoiceAudioElements(1);
                     // Bless #mainVideo inside direct iOS/iPadOS tap gesture so WebKit permits unmuted WebRTC playout when offer arrives
                     try {
                         const p = video.play();
@@ -1145,6 +1170,7 @@
             };
             micBtn.onclick = async (e) => {
                 if (e) e.stopPropagation();
+                preblessVoiceAudioElements(3);
                 if (window.toggleHostMic) {
                     const shouldEnable = isHostMuted; 
                     const success = await window.toggleHostMic(shouldEnable); 
@@ -1163,6 +1189,7 @@
                 updateHostModeUI(activeHostMode);
                 startBtn.onclick = async () => {
                     try {
+                        preblessVoiceAudioElements(3);
                         let fileToStream = selectedVideoFile || window.__testVideoFile || null;
                         if (activeHostMode === 'file' && !fileToStream && videoFileInput) {
                             fileToStream = await new Promise((resolve) => {
@@ -1264,6 +1291,7 @@
                 pendingViewerStart = true;
                 btnLabel.innerText = "JOINING...";
                 video.muted = false;
+                preblessVoiceAudioElements(1);
                 try {
                     const p = video.play();
                     if (p && typeof p.catch === 'function') p.catch(() => {});
@@ -1279,6 +1307,7 @@
                     curtain.classList.add('opacity-0', 'pointer-events-none');
                     setTimeout(() => curtain.classList.add('hidden'), 700);
                     video.muted = false; 
+                    preblessVoiceAudioElements(1);
                     // Bless #mainVideo inside direct iOS/iPadOS tap gesture so WebKit permits unmuted WebRTC playout when offer arrives
                     try {
                         const p = video.play();

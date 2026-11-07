@@ -466,10 +466,11 @@ export class DuckingController {
         this.isDucked = false;
         this.isDestroyed = false;
 
-        // Map of speakerId -> { track, audioCtx, analyser, animId, silenceTimer, isSpeaking, onSpeechChange, endedHandler }
+        // Map of speakerId -> { track, audioCtx, source, analyser, fallbackGain, audioElement, animId, silenceTimer, isSpeaking, onSpeechChange, endedHandler }
         this.speakers = new Map();
         this.activeSpeakers = new Set();
         this.restoreTimeout = null;
+        this.sharedAudioCtx = null;
 
         // Monitor user volume adjustments on the media element
         this._volumeChangeListener = () => {
@@ -511,24 +512,63 @@ export class DuckingController {
     }
 
     /**
-     * Registers an incoming participant voice track to be monitored for speech activity.
+     * Unlocks and resumes the shared AudioContext during a user gesture (e.g. START BROADCAST, JOIN MOVIE, #micBtn).
+     */
+    resumeContext() {
+        if (this.isDestroyed) return;
+        try {
+            const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+            if (AudioContextClass && (!this.sharedAudioCtx || this.sharedAudioCtx.state === 'closed')) {
+                this.sharedAudioCtx = new AudioContextClass();
+                this.sharedAudioCtx.addEventListener('statechange', () => {
+                    if (!this.isDestroyed && this.sharedAudioCtx && (this.sharedAudioCtx.state === 'suspended' || this.sharedAudioCtx.state === 'interrupted')) {
+                        this.sharedAudioCtx.resume().catch(() => { });
+                    }
+                });
+            }
+            if (this.sharedAudioCtx && this.sharedAudioCtx.state !== 'running' && this.sharedAudioCtx.state !== 'closed') {
+                this.sharedAudioCtx.resume().catch(() => { });
+            }
+            this.speakers.forEach(rec => {
+                if (rec.audioCtx && rec.audioCtx.state !== 'running' && rec.audioCtx.state !== 'closed') {
+                    rec.audioCtx.resume().catch(() => { });
+                }
+            });
+        } catch (e) { }
+    }
+
+    /**
+     * Registers an incoming participant voice track to be monitored for speech activity
+     * and provides automatic Web Audio playout fallback if the DOM <audio> element is blocked by mobile autoplay policy.
      * 
      * @param {string} speakerId - Unique ID of the speaking peer.
      * @param {MediaStreamTrack} voiceTrack - Incoming audio track.
      * @param {Function} [onSpeechChange] - Optional callback(isSpeaking: boolean).
+     * @param {HTMLMediaElement} [audioElement] - Optional DOM <audio> element playing the voice track.
      */
-    registerVoiceTrack(speakerId, voiceTrack, onSpeechChange = null) {
+    registerVoiceTrack(speakerId, voiceTrack, onSpeechChange = null, audioElement = null) {
         if (this.isDestroyed || !voiceTrack) return;
 
-        // Clean up previous registration for same ID if present
+        // If the exact same track is already registered for this speaker, update references without tearing down nodes
         if (this.speakers.has(speakerId)) {
+            const existing = this.speakers.get(speakerId);
+            if (existing && existing.track === voiceTrack) {
+                if (onSpeechChange) existing.onSpeechChange = onSpeechChange;
+                if (audioElement) existing.audioElement = audioElement;
+                this.resumeContext();
+                return;
+            }
             this.unregisterVoiceTrack(speakerId);
         }
 
         const speakerRecord = {
             track: voiceTrack,
             audioCtx: null,
+            ownsContext: false,
+            source: null,
             analyser: null,
+            fallbackGain: null,
+            audioElement: audioElement || null,
             animId: null,
             silenceTimer: null,
             isSpeaking: false,
@@ -537,7 +577,7 @@ export class DuckingController {
         };
 
         const handleTrackEnded = () => {
-            this.unregisterVoiceTrack(speakerId);
+            this.unregisterVoiceTrack(speakerId, voiceTrack);
         };
         voiceTrack.addEventListener('ended', handleTrackEnded);
         speakerRecord.endedHandler = handleTrackEnded;
@@ -549,28 +589,54 @@ export class DuckingController {
                 return;
             }
 
-            const audioCtx = new AudioContextClass();
+            if (!this.sharedAudioCtx || this.sharedAudioCtx.state === 'closed') {
+                this.sharedAudioCtx = new AudioContextClass();
+                this.sharedAudioCtx.addEventListener('statechange', () => {
+                    if (!this.isDestroyed && this.sharedAudioCtx && (this.sharedAudioCtx.state === 'suspended' || this.sharedAudioCtx.state === 'interrupted')) {
+                        this.sharedAudioCtx.resume().catch(() => { });
+                    }
+                });
+            }
+            const audioCtx = this.sharedAudioCtx;
             if (audioCtx.state !== 'running') {
                 audioCtx.resume().catch(() => { });
             }
-            audioCtx.addEventListener('statechange', () => {
-                if (!this.isDestroyed && (audioCtx.state === 'suspended' || audioCtx.state === 'interrupted')) {
-                    audioCtx.resume().catch(() => { });
-                }
-            });
             speakerRecord.audioCtx = audioCtx;
+            speakerRecord.ownsContext = false;
 
             const source = audioCtx.createMediaStreamSource(new MediaStream([voiceTrack]));
             const analyser = audioCtx.createAnalyser();
             analyser.fftSize = 256;
             analyser.smoothingTimeConstant = 0.3;
+
+            // Connect analyser -> fallbackGain -> destination so:
+            // 1. WebKit/Chromium pull-graphs continuously pull WebRTC audio samples through the analyser.
+            // 2. If the DOM <audio> element is paused/blocked by mobile autoplay policy, fallbackGain outputs the voice audibly.
+            // 3. When the DOM <audio> element is actively playing, fallbackGain is 0.0 (preventing double playout while preserving native AEC).
+            const fallbackGain = audioCtx.createGain();
+            fallbackGain.gain.value = 0;
+
             source.connect(analyser);
+            analyser.connect(fallbackGain);
+            fallbackGain.connect(audioCtx.destination);
+
+            speakerRecord.source = source;
             speakerRecord.analyser = analyser;
+            speakerRecord.fallbackGain = fallbackGain;
 
             const timeData = new Uint8Array(analyser.frequencyBinCount);
 
             const loop = () => {
                 if (this.isDestroyed || !this.speakers.has(speakerId)) return;
+
+                if (speakerRecord.fallbackGain && speakerRecord.audioElement) {
+                    const el = speakerRecord.audioElement;
+                    const domPlaying = !el.paused && !el.muted && el.readyState >= 2;
+                    const targetGain = domPlaying ? 0 : 1;
+                    if (speakerRecord.fallbackGain.gain.value !== targetGain) {
+                        speakerRecord.fallbackGain.gain.value = targetGain;
+                    }
+                }
 
                 analyser.getByteTimeDomainData(timeData);
 
@@ -585,7 +651,7 @@ export class DuckingController {
                 if (rms > this.thresholdRms) {
                     if (!speakerRecord.isSpeaking) {
                         speakerRecord.isSpeaking = true;
-                        if (onSpeechChange) onSpeechChange(true);
+                        if (speakerRecord.onSpeechChange) speakerRecord.onSpeechChange(true);
                     }
                     if (speakerRecord.silenceTimer) {
                         clearTimeout(speakerRecord.silenceTimer);
@@ -598,7 +664,7 @@ export class DuckingController {
                         speakerRecord.silenceTimer = null;
                         if (this.isDestroyed || !this.speakers.has(speakerId)) return;
                         speakerRecord.isSpeaking = false;
-                        if (onSpeechChange) onSpeechChange(false);
+                        if (speakerRecord.onSpeechChange) speakerRecord.onSpeechChange(false);
                         this._onSpeakerVoiceSilence(speakerId);
                     }, 300);
                 }
@@ -618,10 +684,12 @@ export class DuckingController {
      * Unregisters an incoming voice track and cleans up its audio resources.
      * 
      * @param {string} speakerId 
+     * @param {MediaStreamTrack} [expectedTrack] - If supplied, only unregisters if current track matches.
      */
-    unregisterVoiceTrack(speakerId) {
+    unregisterVoiceTrack(speakerId, expectedTrack = null) {
         const record = this.speakers.get(speakerId);
         if (!record) return;
+        if (expectedTrack && record.track !== expectedTrack) return;
 
         this.speakers.delete(speakerId);
         this.activeSpeakers.delete(speakerId);
@@ -638,10 +706,16 @@ export class DuckingController {
             record.track.removeEventListener('ended', record.endedHandler);
             record.endedHandler = null;
         }
-        if (record.audioCtx) {
+        try { if (record.source) record.source.disconnect(); } catch (e) { }
+        try { if (record.analyser) record.analyser.disconnect(); } catch (e) { }
+        try { if (record.fallbackGain) record.fallbackGain.disconnect(); } catch (e) { }
+        record.source = null;
+        record.analyser = null;
+        record.fallbackGain = null;
+        if (record.audioCtx && record.ownsContext) {
             record.audioCtx.close().catch(() => { });
-            record.audioCtx = null;
         }
+        record.audioCtx = null;
         if (record.onSpeechChange) {
             record.onSpeechChange(false);
         }
@@ -721,6 +795,11 @@ export class DuckingController {
         // Unregister all speakers
         const speakerIds = Array.from(this.speakers.keys());
         speakerIds.forEach(id => this.unregisterVoiceTrack(id));
+
+        if (this.sharedAudioCtx) {
+            this.sharedAudioCtx.close().catch(() => { });
+            this.sharedAudioCtx = null;
+        }
 
         if (this.mediaElement) {
             if (this.mediaElement._volumeRampTimer) {
@@ -837,7 +916,11 @@ export function setupLocalMicMonitor(micTrack, onSpeakingChange) {
         const source = audioCtx.createMediaStreamSource(new MediaStream([micTrack]));
         const analyser = audioCtx.createAnalyser();
         analyser.fftSize = 256;
+        const zeroGain = audioCtx.createGain();
+        zeroGain.gain.value = 0;
         source.connect(analyser);
+        analyser.connect(zeroGain);
+        zeroGain.connect(audioCtx.destination);
 
         const data = new Uint8Array(analyser.frequencyBinCount);
 

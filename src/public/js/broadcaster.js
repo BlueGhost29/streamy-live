@@ -223,18 +223,22 @@ async function applyViewerEncodingProfile(id, pc) {
 
 function ensureAudioElementPlays(audioEl, duckCtrl) {
     if (!audioEl) return;
+    audioEl.muted = false;
+    if (typeof audioEl.volume === 'number' && audioEl.volume === 0) {
+        audioEl.volume = 1.0;
+    }
+    if (duckCtrl && typeof duckCtrl.resumeContext === 'function') {
+        duckCtrl.resumeContext();
+    }
     const playPromise = audioEl.play();
     if (playPromise && typeof playPromise.catch === 'function') {
         playPromise.catch((err) => {
             console.warn("[Audio] Voice playout deferred by browser policy; binding interaction unlock:", err);
             const unlock = () => {
+                audioEl.muted = false;
                 audioEl.play().catch(() => {});
-                if (duckCtrl && duckCtrl.speakers) {
-                    duckCtrl.speakers.forEach(rec => {
-                        if (rec.audioCtx && rec.audioCtx.state !== 'running') {
-                            rec.audioCtx.resume().catch(() => {});
-                        }
-                    });
+                if (duckCtrl && typeof duckCtrl.resumeContext === 'function') {
+                    duckCtrl.resumeContext();
                 }
                 document.removeEventListener('click', unlock);
                 document.removeEventListener('touchstart', unlock);
@@ -245,6 +249,28 @@ function ensureAudioElementPlays(audioEl, duckCtrl) {
             document.addEventListener('keydown', unlock, { once: true });
         });
     }
+}
+
+function claimOrCreateVoicePlayer(playerId) {
+    let player = document.getElementById(playerId);
+    if (player) return player;
+    if (typeof window !== 'undefined' && Array.isArray(window._blessedVoicePlayers) && window._blessedVoicePlayers.length > 0) {
+        player = window._blessedVoicePlayers.pop();
+    }
+    if (!player) {
+        player = new Audio();
+    }
+    player.id = playerId;
+    player.autoplay = true;
+    player.playsInline = true;
+    player.muted = false;
+    player.volume = 1.0;
+    player.setAttribute('playsinline', '');
+    player.setAttribute('webkit-playsinline', '');
+    if (!player.parentNode && document.body) {
+        document.body.appendChild(player);
+    }
+    return player;
 }
 
 /**
@@ -286,6 +312,7 @@ export async function init(roomId, videoElement, socket, options = {}) {
         thresholdRms: 0.02,
         silenceDelayMs: 1200
     });
+    duckingController.resumeContext();
 
     // Expose diagnostics helper for debugging & test assertion
     window.broadcasterAudioDiagnostics = (viewerId) => {
@@ -315,6 +342,7 @@ export async function init(roomId, videoElement, socket, options = {}) {
         socket.off("watcher");
         socket.off("answer");
         socket.off("candidate");
+        socket.off("intercom-state");
         socket.off("disconnectPeer");
         socket.off("bitrate_request");
 
@@ -602,13 +630,21 @@ export async function init(roomId, videoElement, socket, options = {}) {
                             }
                         });
 
-                        // Inject into existing active peer connections dynamically via replaceTrack
-                        const replacePromises = Object.values(peerConnections).map(async pc => {
-                            const voiceTransceiver = pc.getTransceivers().find(
+                        // Inject into existing active peer connections dynamically via replaceTrack + in-place SDP sync
+                        if (duckingController) {
+                            duckingController.resumeContext();
+                        }
+                        const replacePromises = Object.entries(peerConnections).map(async ([viewerId, pc]) => {
+                            const voiceTransceiver = pc._intercomTransceiver || pc.getTransceivers().find(
                                 t => t.direction === 'sendrecv' || t.currentDirection === 'sendrecv'
                             );
                             if (voiceTransceiver && voiceTransceiver.sender) {
+                                voiceTransceiver.direction = 'sendrecv';
                                 await voiceTransceiver.sender.replaceTrack(hostMicTrack);
+                            }
+                            socket.emit("intercom-state", viewerId, { active: true });
+                            if (typeof window._renegotiateIntercomWithViewer === 'function') {
+                                await window._renegotiateIntercomWithViewer(viewerId);
                             }
                         });
                         await Promise.all(replacePromises);
@@ -625,13 +661,14 @@ export async function init(roomId, videoElement, socket, options = {}) {
                             micStream = null;
                         }
 
-                        const clearPromises = Object.values(peerConnections).map(async pc => {
-                            const voiceTransceiver = pc.getTransceivers().find(
+                        const clearPromises = Object.entries(peerConnections).map(async ([viewerId, pc]) => {
+                            const voiceTransceiver = pc._intercomTransceiver || pc.getTransceivers().find(
                                 t => t.direction === 'sendrecv' || t.currentDirection === 'sendrecv'
                             );
                             if (voiceTransceiver && voiceTransceiver.sender) {
                                 await voiceTransceiver.sender.replaceTrack(null);
                             }
+                            socket.emit("intercom-state", viewerId, { active: false });
                         });
                         await Promise.all(clearPromises);
                         if (typeof onMicStateChange === 'function') onMicStateChange(false);
@@ -776,6 +813,72 @@ export async function init(roomId, videoElement, socket, options = {}) {
         if (window.broadcaster) {
             window.broadcaster.restartIce = performIceRestart;
         }
+
+        const renegotiateIntercomWithViewer = async (id) => {
+            const pc = peerConnections[id];
+            const st = viewerStates[id];
+            if (!pc || !st || pc.signalingState === 'closed' || pc.iceConnectionState === 'closed' || pc.iceConnectionState === 'failed') {
+                return false;
+            }
+            if (pc.signalingState !== 'stable') {
+                st.pendingIntercomRenegotiate = true;
+                return false;
+            }
+            st.pendingIntercomRenegotiate = false;
+            const regen = ++st.generation;
+            try {
+                const offer = await pc.createOffer();
+                if (peerConnections[id] !== pc || !viewerStates[id] || viewerStates[id].generation !== regen) {
+                    return false;
+                }
+                const enhancedSdp = enhanceBroadcasterOffer(offer.sdp, systemAudioTrack, pc);
+                await pc.setLocalDescription({ type: 'offer', sdp: enhancedSdp });
+                if (peerConnections[id] !== pc || !viewerStates[id] || viewerStates[id].generation !== regen) {
+                    return false;
+                }
+                socket.emit("offer", id, pc.localDescription);
+                return true;
+            } catch (err) {
+                console.warn(`[Intercom] In-place renegotiation warning for ${id}:`, err);
+                return false;
+            }
+        };
+        window._renegotiateIntercomWithViewer = renegotiateIntercomWithViewer;
+
+        const bindViewerVoiceTrack = (id, track, { forceRefresh = false } = {}) => {
+            if (!track || track.kind !== 'audio') return;
+            const viewerVoicePlayer = claimOrCreateVoicePlayer(`voice_${id}`);
+            const currentTracks = (viewerVoicePlayer.srcObject && typeof viewerVoicePlayer.srcObject.getTracks === 'function')
+                ? viewerVoicePlayer.srcObject.getTracks()
+                : [];
+            if (forceRefresh || !currentTracks.includes(track) || viewerVoicePlayer.paused) {
+                viewerVoicePlayer.srcObject = new MediaStream([track]);
+            }
+            ensureAudioElementPlays(viewerVoicePlayer, duckingController);
+
+            if (duckingController) {
+                duckingController.registerVoiceTrack(id, track, (isSpeaking) => {
+                    setViewerSpeaking(id, isSpeaking);
+                }, viewerVoicePlayer);
+            }
+
+            if (!track._streamyBound) {
+                track._streamyBound = true;
+                track.addEventListener('unmute', () => {
+                    bindViewerVoiceTrack(id, track, { forceRefresh: true });
+                });
+                track.addEventListener('ended', () => {
+                    if (duckingController) {
+                        duckingController.unregisterVoiceTrack(id, track);
+                    }
+                    const player = document.getElementById(`voice_${id}`);
+                    if (player && player.srcObject && typeof player.srcObject.getTracks === 'function') {
+                        if (!player.srcObject.getTracks().includes(track)) return;
+                    }
+                    if (player && player.parentNode) player.parentNode.removeChild(player);
+                });
+            }
+        };
 
         const startViewerTelemetry = (id, pc) => {
             const st = viewerStates[id];
@@ -952,12 +1055,12 @@ export async function init(roomId, videoElement, socket, options = {}) {
             // Mode 'camera': Voice transceiver is recvonly on host (receives viewer voices, host mic is on Lane 2)
             // Mode 'screen': Voice transceiver is sendrecv (bi-directional intercom)
             if (currentMode === 'camera') {
-                peerConnection.addTransceiver('audio', { direction: 'recvonly' });
+                peerConnection._intercomTransceiver = peerConnection.addTransceiver('audio', { direction: 'recvonly' });
             } else {
                 if (hostMicTrack) {
-                    peerConnection.addTransceiver(hostMicTrack, { direction: 'sendrecv' });
+                    peerConnection._intercomTransceiver = peerConnection.addTransceiver(hostMicTrack, { direction: 'sendrecv' });
                 } else {
-                    peerConnection.addTransceiver('audio', { direction: 'sendrecv' }); 
+                    peerConnection._intercomTransceiver = peerConnection.addTransceiver('audio', { direction: 'sendrecv' }); 
                 }
             }
 
@@ -966,48 +1069,7 @@ export async function init(roomId, videoElement, socket, options = {}) {
                 const track = event.track;
                 if (track.kind === 'audio') {
                     console.log(`[Audio] Receiving voice from Viewer ${id}`);
-                    let viewerVoicePlayer = document.getElementById(`voice_${id}`);
-                    if (!viewerVoicePlayer) {
-                        viewerVoicePlayer = new Audio();
-                        viewerVoicePlayer.id = `voice_${id}`;
-                        viewerVoicePlayer.autoplay = true;
-                        viewerVoicePlayer.playsInline = true;
-                        viewerVoicePlayer.setAttribute('playsinline', '');
-                        viewerVoicePlayer.setAttribute('webkit-playsinline', '');
-                        // Native AEC requirement: MUST append to DOM
-                        document.body.appendChild(viewerVoicePlayer);
-                    }
-                    viewerVoicePlayer.srcObject = new MediaStream([track]);
-                    ensureAudioElementPlays(viewerVoicePlayer, duckingController);
-                    
-                    // Register viewer voice with DuckingController
-                    if (duckingController) {
-                        duckingController.registerVoiceTrack(id, track, (isSpeaking) => {
-                            setViewerSpeaking(id, isSpeaking);
-                        });
-                    }
-
-                    // When Viewer unmutes mid-session via replaceTrack(), RTP packets begin flowing and 'unmute' fires
-                    track.addEventListener('unmute', () => {
-                        const player = document.getElementById(`voice_${id}`);
-                        if (player) {
-                            ensureAudioElementPlays(player, duckingController);
-                        }
-                        if (duckingController && duckingController.speakers) {
-                            const rec = duckingController.speakers.get(id);
-                            if (rec && rec.audioCtx && rec.audioCtx.state !== 'running') {
-                                rec.audioCtx.resume().catch(() => {});
-                            }
-                        }
-                    });
-
-                    track.addEventListener('ended', () => {
-                        if (duckingController) {
-                            duckingController.unregisterVoiceTrack(id);
-                        }
-                        const player = document.getElementById(`voice_${id}`);
-                        if (player && player.parentNode) player.parentNode.removeChild(player);
-                    });
+                    bindViewerVoiceTrack(id, track);
                 }
             };
 
@@ -1181,12 +1243,23 @@ export async function init(roomId, videoElement, socket, options = {}) {
             }
             try {
                 await pc.setRemoteDescription(description);
+                const intercomTransceiver = pc._intercomTransceiver || pc.getTransceivers().find(
+                    t => t.direction === 'sendrecv' || t.direction === 'recvonly' ||
+                         t.currentDirection === 'sendrecv' || t.currentDirection === 'recvonly'
+                );
+                if (intercomTransceiver && intercomTransceiver.receiver && intercomTransceiver.receiver.track) {
+                    bindViewerVoiceTrack(id, intercomTransceiver.receiver.track);
+                }
                 const queued = pendingCandidates[id] || [];
                 delete pendingCandidates[id];
                 for (const cand of queued) {
                     if (peerConnections[id] === pc && cand && cand.candidate) {
                         await pc.addIceCandidate(new RTCIceCandidate(cand)).catch(e => console.warn("[ICE] Queued candidate error:", e));
                     }
+                }
+                if (viewerStates[id] && viewerStates[id].pendingIntercomRenegotiate && pc.signalingState === 'stable') {
+                    viewerStates[id].pendingIntercomRenegotiate = false;
+                    await renegotiateIntercomWithViewer(id);
                 }
             } catch (e) {
                 console.error("[WebRTC] Error setting remote answer:", e);
@@ -1203,6 +1276,31 @@ export async function init(roomId, videoElement, socket, options = {}) {
             } else {
                 if (!pendingCandidates[id]) pendingCandidates[id] = [];
                 pendingCandidates[id].push(candidate);
+            }
+        });
+
+        socket.off("intercom-state");
+        socket.on("intercom-state", async (viewerId, payload) => {
+            const pc = peerConnections[viewerId];
+            if (!pc || !payload) return;
+            if (duckingController) {
+                duckingController.resumeContext();
+            }
+            const intercomTransceiver = pc._intercomTransceiver || pc.getTransceivers().find(
+                t => t.direction === 'sendrecv' || t.direction === 'recvonly' ||
+                     t.currentDirection === 'sendrecv' || t.currentDirection === 'recvonly'
+            );
+            if (payload.active) {
+                if (intercomTransceiver && intercomTransceiver.receiver && intercomTransceiver.receiver.track) {
+                    bindViewerVoiceTrack(viewerId, intercomTransceiver.receiver.track, { forceRefresh: true });
+                }
+                if (pc.signalingState === 'stable') {
+                    await renegotiateIntercomWithViewer(viewerId);
+                } else if (viewerStates[viewerId]) {
+                    viewerStates[viewerId].pendingIntercomRenegotiate = true;
+                }
+            } else {
+                setViewerSpeaking(viewerId, false);
             }
         });
 
