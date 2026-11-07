@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: streamy-pro
+    runtime: node
+    plan: free
+    region: oregon # options: oregon, ohio, frankfurt, singapore
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 4000
+
+

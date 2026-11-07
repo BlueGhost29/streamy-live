@@ -16,55 +16,206 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     
     <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="Streamy">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="theme-color" content="#4c0519">
+    <meta name="theme-color" content="#1a050f">
 </head>
 
-<body class="flex items-center justify-center h-screen text-white bg-[#1a050f] overflow-hidden antialiased" style="font-family: 'Inter', sans-serif;">
+<body class="flex items-center justify-center min-h-screen min-h-[100dvh] py-6 text-white bg-[#1a050f] overflow-x-hidden overflow-y-auto antialiased" style="font-family: 'Inter', sans-serif;">
     
     <!-- Fine-Arts Bokeh Background -->
-    <div class="absolute inset-0 z-0 overflow-hidden">
+    <div class="fixed inset-0 z-0 overflow-hidden pointer-events-none">
         <div class="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-rose-900/40 rounded-full blur-[100px] animate-pulse" style="animation-duration: 8s;"></div>
         <div class="absolute bottom-[-20%] right-[-10%] w-[600px] h-[600px] bg-red-950/60 rounded-full blur-[120px] animate-pulse" style="animation-duration: 12s; animation-delay: 2s;"></div>
         <div class="absolute top-[30%] left-[60%] w-[300px] h-[300px] bg-pink-900/20 rounded-full blur-[80px] animate-pulse" style="animation-duration: 10s; animation-delay: 4s;"></div>
     </div>
 
     <!-- High-End Frosted Glass UI Card -->
-    <div class="relative z-10 max-w-md w-full mx-6 p-10 bg-white/[0.03] backdrop-blur-2xl rounded-3xl shadow-[0_8px_32px_0_rgba(0,0,0,0.3)] border border-white/[0.08] text-center transition-all duration-700 ease-out transform translate-y-0">
+    <div class="relative z-10 max-w-md w-full mx-4 sm:mx-6 p-6 sm:p-10 bg-white/[0.03] backdrop-blur-2xl rounded-3xl shadow-[0_8px_32px_0_rgba(0,0,0,0.3)] border border-white/[0.08] text-center transition-all duration-700 ease-out transform translate-y-0">
         
-        <h1 class="text-5xl font-bold mb-3 tracking-wide text-rose-100/90" style="font-family: 'Playfair Display', serif;">
+        <h1 class="text-4xl sm:text-5xl font-bold mb-2 sm:mb-3 tracking-wide text-rose-100/90" style="font-family: 'Playfair Display', serif;">
             Our Theater
         </h1>
-        <p class="text-rose-200/50 mb-10 font-light tracking-widest uppercase text-xs">An Intimate Cinematic Experience</p>
+        <p class="text-rose-200/50 mb-6 sm:mb-10 font-light tracking-widest uppercase text-xs">An Intimate Cinematic Experience</p>
 
-        <div class="space-y-6">
-            <!-- iPad Optimized Inputs (Large touch targets, elegant minimal borders) -->
+        <div class="space-y-4 sm:space-y-6">
+            <!-- iPad & Mobile Optimized Inputs (16px+ font prevents iOS Safari viewport zoom) -->
             <input type="text" id="usernameInput" placeholder="Enter your name..." 
-                class="w-full py-4 px-6 bg-black/20 border border-white/10 rounded-2xl focus:outline-none focus:border-rose-400/50 focus:bg-black/40 text-center text-lg placeholder-rose-100/20 transition-all font-light tracking-wide text-rose-50 shadow-inner">
+                class="w-full py-3.5 sm:py-4 px-6 bg-black/20 border border-white/10 rounded-2xl focus:outline-none focus:border-rose-400/50 focus:bg-black/40 text-center text-base sm:text-lg placeholder-rose-100/20 transition-all font-light tracking-wide text-rose-50 shadow-inner">
             
             <input type="text" id="roomInput" placeholder="Ticket code (Leave empty to generate)" 
-                class="w-full mt-6 py-4 px-6 bg-black/20 border border-white/10 rounded-2xl focus:outline-none focus:border-rose-400/50 focus:bg-black/40 text-center text-[15px] placeholder-rose-100/20 transition-all font-light tracking-widest text-rose-50 shadow-inner">
+                class="w-full mt-4 sm:mt-6 py-3.5 sm:py-4 px-6 bg-black/20 border border-white/10 rounded-2xl focus:outline-none focus:border-rose-400/50 focus:bg-black/40 text-center text-base placeholder-rose-100/20 transition-all font-light tracking-widest text-rose-50 shadow-inner">
 
-            <button id="openTheaterBtn" class="group w-full mt-4 py-5 bg-gradient-to-r from-rose-900/80 to-red-950/80 hover:from-rose-800 hover:to-rose-950 rounded-2xl text-rose-100 transition-all transform hover:scale-[1.01] border border-rose-400/20 hover:border-rose-300/40 shadow-lg shadow-rose-900/20">
+            <!-- Explicit Host Mode Chooser in Lobby -->
+            <div id="lobbyModeChooser" class="space-y-2 text-left pt-2">
+                <label class="block text-[11px] uppercase tracking-widest text-rose-300/70 font-semibold mb-1">Host Intent / Mode</label>
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    <button type="button" id="modeScreenBtn" class="py-2.5 px-2 rounded-xl border border-white/10 bg-black/40 text-rose-200 text-xs font-medium hover:border-rose-400/50 transition-all flex flex-col items-center gap-1 shadow-sm">
+                        <span class="text-base">🖥️</span>
+                        <span>Screen</span>
+                    </button>
+                    <button type="button" id="modeFileBtn" class="py-2.5 px-2 rounded-xl border border-white/10 bg-black/40 text-rose-200 text-xs font-medium hover:border-purple-400/50 transition-all flex flex-col items-center gap-1 shadow-sm">
+                        <span class="text-base">🎬</span>
+                        <span>Video File</span>
+                    </button>
+                    <button type="button" id="modeCameraBtn" class="py-2.5 px-2 rounded-xl border border-white/10 bg-black/40 text-rose-200 text-xs font-medium hover:border-pink-400/50 transition-all flex flex-col items-center gap-1 shadow-sm">
+                        <span class="text-base">📹</span>
+                        <span>Camera</span>
+                    </button>
+                    <button type="button" id="modeViewerBtn" class="py-2.5 px-2 rounded-xl border border-white/10 bg-black/40 text-rose-200 text-xs font-medium hover:border-amber-400/50 transition-all flex flex-col items-center gap-1 shadow-sm">
+                        <span class="text-base">🍿</span>
+                        <span>Viewer</span>
+                    </button>
+                </div>
+                <p id="modeDescription" class="text-[11px] text-rose-200/50 mt-1 leading-tight font-light"></p>
+            </div>
+
+            <button id="openTheaterBtn" class="group w-full mt-2 py-4 sm:py-5 bg-gradient-to-r from-rose-900/80 to-red-950/80 hover:from-rose-800 hover:to-rose-950 rounded-2xl text-rose-100 transition-all transform hover:scale-[1.01] border border-rose-400/20 hover:border-rose-300/40 shadow-lg shadow-rose-900/20">
                 <span class="flex items-center justify-center gap-3 text-[15px] font-medium tracking-widest uppercase" style="font-family: 'Inter', sans-serif;">
                     <span class="text-xl">✨</span> Open the Theater
                 </span>
             </button>
             
-            <p class="text-[10px] text-rose-200/30 mt-6 pt-4 border-t border-rose-900/30 tracking-widest uppercase flex items-center justify-center gap-2">
-                <span class="inline-block w-1.5 h-1.5 rounded-full bg-rose-500/80 shadow-[0_0_8px_rgba(244,63,94,0.8)]"></span>
-                Connection Secured
+            <p id="deviceStatusNotice" class="text-[10px] text-rose-200/40 mt-4 sm:mt-6 pt-4 border-t border-rose-900/30 tracking-widest uppercase flex items-center justify-center gap-2">
+                <span class="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500/80 shadow-[0_0_8px_rgba(16,185,129,0.8)]"></span>
+                <span id="deviceStatusText">Detecting Capabilities...</span>
             </p>
+            <div id="deviceCapabilityNotice" class="hidden text-[11px] text-amber-300/80 bg-amber-950/30 border border-amber-800/40 rounded-xl p-3 text-center"></div>
 
-            <button id="ticketBtn" class="w-full mt-2 py-3 bg-white/[0.02] hover:bg-rose-900/30 rounded-2xl text-rose-300 transition-all font-light tracking-wider border border-white/[0.05] hover:border-rose-400/20 text-sm flex items-center justify-center gap-2">
-                🎟️ Download Theater Invite
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                <button id="ticketBtn" type="button" class="w-full py-3 bg-white/[0.02] hover:bg-rose-900/30 rounded-2xl text-rose-300 transition-all font-light tracking-wider border border-white/[0.05] hover:border-rose-400/20 text-xs sm:text-sm flex items-center justify-center gap-2">
+                    <span>🎟️</span> <span>Invite Ticket</span>
+                </button>
+                <button id="installAppBtn" type="button" class="w-full py-3 bg-white/[0.02] hover:bg-rose-900/30 rounded-2xl text-rose-300 transition-all font-light tracking-wider border border-white/[0.05] hover:border-rose-400/20 text-xs sm:text-sm flex items-center justify-center gap-2">
+                    <span>📲</span> <span id="installAppBtnLabel">Install Web App</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cross-Platform PWA Install Guide Modal (iPadOS / iOS / Android / Windows) -->
+    <div id="installModal" class="fixed inset-0 z-50 hidden items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+        <div class="max-w-sm w-full p-6 bg-[#1f0713] border border-rose-500/30 rounded-3xl shadow-2xl text-left space-y-4">
+            <div class="flex items-center justify-between border-b border-white/10 pb-3">
+                <h2 class="text-base font-bold text-rose-100 tracking-wide">📲 Install Streamy Pro</h2>
+                <button id="closeInstallModalBtn" type="button" class="text-rose-300 hover:text-white text-lg font-bold px-2">×</button>
+            </div>
+            <div id="installModalBody" class="space-y-3 text-xs text-rose-100/80 leading-relaxed">
+                <div class="p-3 rounded-xl bg-white/5 border border-white/10">
+                    <p class="font-semibold text-rose-300 mb-1">🍎 iPad &amp; iPhone (Safari)</p>
+                    <p>Tap the <strong>Share</strong> button (<span class="font-mono">⎋</span>) in the Safari toolbar, then tap <strong>"Add to Home Screen"</strong>.</p>
+                </div>
+                <div class="p-3 rounded-xl bg-white/5 border border-white/10">
+                    <p class="font-semibold text-rose-300 mb-1">🤖 Android (Chrome)</p>
+                    <p>Tap the <strong>⋮ Menu</strong> in the top-right corner, then tap <strong>"Install app"</strong> or <strong>"Add to Home screen"</strong>.</p>
+                </div>
+                <div class="p-3 rounded-xl bg-white/5 border border-white/10">
+                    <p class="font-semibold text-rose-300 mb-1">🪟 Windows (Chrome / Edge)</p>
+                    <p>Click the <strong>Install icon (⊕)</strong> on the right side of the address bar, or open <strong>Menu ➔ Apps ➔ Install Streamy Pro</strong>.</p>
+                </div>
+            </div>
+            <button id="dismissInstallModalBtn" type="button" class="w-full py-2.5 bg-rose-700 hover:bg-rose-600 text-white rounded-xl text-xs font-semibold uppercase tracking-widest transition-colors">
+                Got It
             </button>
         </div>
     </div>
 
     <script type="module">
         import { generateRoomId } from './js/ui.js';
+        import { getDeviceCapabilities, getCapabilityDiagnostics } from './js/modules/core/capabilities.js';
         import { io } from 'https://cdn.socket.io/4.7.5/socket.io.esm.min.js';
+
+        // Check local capabilities
+        const caps = getDeviceCapabilities();
+        const statusText = document.getElementById('deviceStatusText');
+        const capNotice = document.getElementById('deviceCapabilityNotice');
+        let selectedHostMode = caps.recommendedHostMode;
+
+        const screenBtn = document.getElementById('modeScreenBtn');
+        const fileBtn = document.getElementById('modeFileBtn');
+        const cameraBtn = document.getElementById('modeCameraBtn');
+        const viewerBtn = document.getElementById('modeViewerBtn');
+        const modeDesc = document.getElementById('modeDescription');
+
+        function updateChooserUI() {
+            [screenBtn, fileBtn, cameraBtn, viewerBtn].filter(Boolean).forEach(b => {
+                b.classList.remove('border-rose-500', 'bg-rose-950/60', 'border-purple-500', 'bg-purple-950/60', 'border-pink-500', 'border-pink-500/80', 'bg-pink-950/60', 'border-amber-500', 'bg-amber-950/60');
+                b.classList.add('border-white/10', 'bg-black/40');
+            });
+
+            if (selectedHostMode === 'screen') {
+                screenBtn.classList.remove('border-white/10', 'bg-black/40');
+                screenBtn.classList.add('border-rose-500', 'bg-rose-950/60');
+                modeDesc.innerText = "Share desktop screen with high-fidelity system/movie audio.";
+            } else if (selectedHostMode === 'file' && fileBtn) {
+                fileBtn.classList.remove('border-white/10', 'bg-black/40');
+                fileBtn.classList.add('border-purple-500', 'bg-purple-950/60');
+                modeDesc.innerText = "Stream a local Movie or Anime file (.mp4, .mkv, .webm) with subtitles on Windows, iPad, or Android.";
+            } else if (selectedHostMode === 'camera') {
+                cameraBtn.classList.remove('border-white/10', 'bg-black/40');
+                cameraBtn.classList.add('border-pink-500', 'border-pink-500/80', 'bg-pink-950/60');
+                modeDesc.innerText = "Live camera broadcast using device webcam & microphone.";
+            } else {
+                viewerBtn.classList.remove('border-white/10', 'bg-black/40');
+                viewerBtn.classList.add('border-amber-500', 'bg-amber-950/60');
+                modeDesc.innerText = "Join as a spectator. Voice intercom and watch party.";
+            }
+        }
+
+        if (!caps.canScreenShare) {
+            screenBtn.classList.add('opacity-40');
+            screenBtn.title = "Screen capture not supported on this device/browser";
+        }
+        if (!caps.canCameraBroadcast) {
+            cameraBtn.classList.add('opacity-40');
+            cameraBtn.title = "Camera not accessible in this context";
+        }
+
+        screenBtn.addEventListener('click', () => {
+            selectedHostMode = 'screen';
+            updateChooserUI();
+        });
+        if (fileBtn) {
+            fileBtn.addEventListener('click', () => {
+                selectedHostMode = 'file';
+                updateChooserUI();
+            });
+        }
+        cameraBtn.addEventListener('click', () => {
+            selectedHostMode = 'camera';
+            updateChooserUI();
+        });
+        viewerBtn.addEventListener('click', () => {
+            selectedHostMode = 'viewer';
+            updateChooserUI();
+        });
+
+        updateChooserUI();
+
+        if (statusText) {
+            if (!caps.isSecureContext) {
+                statusText.innerText = "Insecure Context (Requires HTTPS / localhost)";
+                statusText.parentElement.classList.replace('text-rose-200/40', 'text-amber-400/80');
+                if (capNotice) {
+                    capNotice.innerText = "⚠️ Insecure Context: WebRTC APIs require HTTPS or localhost. Media capture unavailable.";
+                    capNotice.classList.remove('hidden');
+                }
+            } else if (!caps.hasMediaDevices) {
+                statusText.innerText = "APIs unavailable";
+                statusText.parentElement.classList.replace('text-rose-200/40', 'text-amber-400/80');
+                if (capNotice) {
+                    capNotice.innerText = "⚠️ Media capture APIs unavailable in this browser context.";
+                    capNotice.classList.remove('hidden');
+                }
+            } else if (caps.canScreenShare) {
+                statusText.innerText = "Desktop Ready (Screen & System Audio)";
+            } else if (caps.canCameraBroadcast) {
+                statusText.innerText = "Mobile Ready (Live Camera & Viewer)";
+            } else {
+                statusText.innerText = "Viewer Only (Playback Supported)";
+            }
+        }
 
         // Helper to get name or default
         const getName = () => {
@@ -72,23 +223,38 @@
             return name || "Anonymous";
         };
 
+        // Shared room code sanitizer (keeps lobby entry & invite ticket 100% synchronized)
+        const RESERVED_CODES = new Set([
+            '__proto__', 'constructor', 'prototype', 'tostring', 'valueof',
+            'hasownproperty', 'isprototypeof', 'propertyisenumerable',
+            'tolocalestring', '__definegetter__', '__definesetter__',
+            '__lookupgetter__', '__lookupsetter__'
+        ]);
+        const sanitizeRoomCode = (raw) => {
+            if (typeof raw !== 'string') return '';
+            const cleaned = raw.trim().replace(/\s+/g, '-').replace(/[^A-Za-z0-9_-]/g, '').substring(0, 12).toUpperCase();
+            if (!cleaned || RESERVED_CODES.has(cleaned.toLowerCase())) return '';
+            return cleaned;
+        };
+
         const socket = io(); // Connect socket strictly for check-room logic
 
-        // 1. Single Intelligent Entry Logic
+        // 1. Single Intelligent Entry Logic with Explicit Host Mode
         document.getElementById('openTheaterBtn').addEventListener('click', () => {
-            let code = document.getElementById('roomInput').value.trim();
+            let code = sanitizeRoomCode(document.getElementById('roomInput').value);
             const name = getName();
             
             if (!code) {
                 code = generateRoomId();
             }
+            document.getElementById('roomInput').value = code;
 
-            // Ask Server: Is there a broadcast in this room?
+            // Ask Server: Is there an active broadcast in this room?
             socket.emit("check-room", code, (hasHost) => {
-                if (hasHost) {
+                if (hasHost || selectedHostMode === 'viewer') {
                     window.location.href = `/room.html?room=${code}&role=viewer&name=${encodeURIComponent(name)}`;
                 } else {
-                    window.location.href = `/room.html?room=${code}&role=host&name=${encodeURIComponent(name)}`;
+                    window.location.href = `/room.html?room=${code}&role=host&mode=${selectedHostMode}&name=${encodeURIComponent(name)}`;
                 }
             });
         });
@@ -99,12 +265,14 @@
 
         // 3. VIP Ticket Generator (Off-Screen Canvas)
         document.getElementById('ticketBtn').addEventListener('click', () => {
-            let ticketCode = document.getElementById('roomInput').value.trim();
-            if (!ticketCode) {
-                ticketCode = generateRoomId();
-                document.getElementById('roomInput').value = ticketCode;
+            let rawCode = document.getElementById('roomInput').value.trim();
+            if (!rawCode) {
+                rawCode = generateRoomId();
             }
-            const nameInput = getName();
+            const ticketCode = sanitizeRoomCode(rawCode) || 'CINEMA';
+            document.getElementById('roomInput').value = ticketCode;
+            const rawName = getName();
+            const safeName = rawName.substring(0, 24);
 
             // Create High-Res Canvas
             const canvas = document.createElement('canvas');
@@ -147,7 +315,7 @@
 
             ctx.fillStyle = '#fda4af';
             ctx.font = 'italic 22px "Playfair Display"';
-            ctx.fillText(`Secured by: ${nameInput}`, 45, 175);
+            ctx.fillText(`Secured by: ${safeName}`, 45, 175);
 
             ctx.fillStyle = '#fde047';
             ctx.font = 'bold 35px "Inter"';
@@ -170,6 +338,70 @@
             a.click();
             document.body.removeChild(a);
         });
+
+        // 4. Progressive Web App (PWA) Service Worker & Install Handler (Windows, Android, iPadOS/iOS)
+        if ('serviceWorker' in navigator && window.isSecureContext) {
+            navigator.serviceWorker.register('/sw.js').catch(err => {
+                console.warn('[PWA] Service worker registration skipped:', err);
+            });
+        }
+
+        let deferredInstallPrompt = null;
+        const installAppBtn = document.getElementById('installAppBtn');
+        const installModal = document.getElementById('installModal');
+        const closeInstallModalBtn = document.getElementById('closeInstallModalBtn');
+        const dismissInstallModalBtn = document.getElementById('dismissInstallModalBtn');
+
+        const isStandalone = Boolean(
+            (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
+            window.navigator.standalone === true
+        );
+        if (isStandalone && installAppBtn) {
+            installAppBtn.classList.add('hidden');
+            const ticketBtn = document.getElementById('ticketBtn');
+            if (ticketBtn && ticketBtn.parentElement) {
+                ticketBtn.parentElement.classList.remove('sm:grid-cols-2');
+            }
+        }
+
+        window.addEventListener('beforeinstallprompt', (e) => {
+            e.preventDefault();
+            deferredInstallPrompt = e;
+        });
+
+        window.addEventListener('appinstalled', () => {
+            deferredInstallPrompt = null;
+            if (installAppBtn) installAppBtn.classList.add('hidden');
+        });
+
+        const closeInstallModal = () => {
+            if (installModal) {
+                installModal.classList.add('hidden');
+                installModal.classList.remove('flex');
+            }
+        };
+
+        if (installAppBtn) {
+            installAppBtn.addEventListener('click', async () => {
+                if (deferredInstallPrompt) {
+                    deferredInstallPrompt.prompt();
+                    try {
+                        await deferredInstallPrompt.userChoice;
+                    } catch (e) {}
+                    deferredInstallPrompt = null;
+                } else if (installModal) {
+                    installModal.classList.remove('hidden');
+                    installModal.classList.add('flex');
+                }
+            });
+        }
+        if (closeInstallModalBtn) closeInstallModalBtn.addEventListener('click', closeInstallModal);
+        if (dismissInstallModalBtn) dismissInstallModalBtn.addEventListener('click', closeInstallModal);
+        if (installModal) {
+            installModal.addEventListener('click', (e) => {
+                if (e.target === installModal) closeInstallModal();
+            });
+        }
     </script>
 </body>
 </html>

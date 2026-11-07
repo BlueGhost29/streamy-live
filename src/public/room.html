@@ -12,11 +12,16 @@
     <link rel="apple-touch-icon" href="/assets/icons/icon.png">
     
     <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="Streamy">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="theme-color" content="#000000">
 </head>
 
 <body class="bg-red-950 text-white h-screen w-screen overflow-hidden select-none font-sans">
+
+    <!-- Toast Notification Container for Diagnostics & Warnings -->
+    <div id="toastContainer" class="fixed top-6 right-6 z-[120] flex flex-col gap-3 max-w-sm pointer-events-none"></div>
 
     <div id="ui-layer" class="absolute top-0 left-0 w-full z-50 p-6 flex justify-between items-start transition-transform duration-500 ease-in-out">
         
@@ -43,6 +48,24 @@
     <div id="curtain" class="fixed inset-0 z-[60] bg-black flex flex-col items-center justify-center transition-opacity duration-700">
         <div class="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-rose-900/40 via-red-950 to-black"></div>
         
+        <!-- Explicit Host Mode Selector -->
+        <div id="hostModeChooser" class="hidden mb-6 flex flex-wrap items-center justify-center gap-2 p-1.5 bg-black/50 backdrop-blur-xl rounded-full border border-white/10 shadow-2xl z-10">
+            <button id="modeScreenBtn" type="button" class="px-5 py-2.5 rounded-full text-xs font-semibold tracking-wider uppercase transition-all duration-300 flex items-center gap-2 text-slate-300 hover:text-white">
+                <span class="text-base">🖥️</span> <span>Screen Share</span>
+            </button>
+            <button id="modeFileBtn" type="button" class="px-5 py-2.5 rounded-full text-xs font-semibold tracking-wider uppercase transition-all duration-300 flex items-center gap-2 text-slate-300 hover:text-white">
+                <span class="text-base">🎬</span> <span>Video File</span>
+            </button>
+            <button id="modeCameraBtn" type="button" class="px-5 py-2.5 rounded-full text-xs font-semibold tracking-wider uppercase transition-all duration-300 flex items-center gap-2 text-slate-300 hover:text-white">
+                <span class="text-base">🎥</span> <span>Live Camera</span>
+            </button>
+            <button id="modeViewerBtn" type="button" class="px-5 py-2.5 rounded-full text-xs font-semibold tracking-wider uppercase transition-all duration-300 flex items-center gap-2 text-slate-300 hover:text-white">
+                <span class="text-base">🍿</span> <span>Be a Viewer</span>
+            </button>
+        </div>
+        <input type="file" id="videoFileInput" accept="video/*,.mkv,.mp4,.webm,.mov,.m4v" class="hidden">
+        <input type="file" id="subtitleFileInput" accept=".srt,.vtt,text/vtt" class="hidden">
+
         <button id="startActionBtn" class="relative group active:scale-95 transition-transform duration-200">
             <div class="absolute -inset-1 bg-gradient-to-r from-blue-600 to-purple-600 rounded-full blur opacity-25 group-hover:opacity-75 transition duration-1000 group-hover:duration-200"></div>
             
@@ -56,30 +79,51 @@
 
     <div id="video-wrapper" class="relative w-screen h-screen flex justify-center items-center bg-red-950/20 overflow-hidden">
         <!-- AMBILIGHT CANVAS (Behind video) -->
-        <canvas id="ambilightCanvas" class="absolute inset-0 w-full h-full object-cover opacity-80 blur-[80px] saturate-200 z-0"></canvas>
+        <canvas id="ambilightCanvas" class="absolute inset-0 w-full h-full object-cover opacity-80 blur-[80px] saturate-200 z-0 transition-opacity duration-500"></canvas>
         
         <video id="mainVideo" playsinline autoplay class="relative w-full h-full object-contain max-h-screen max-w-screen shadow-2xl z-10"></video>
         
         <!-- LASER CANVAS (In front of video, pointer events active) -->
-        <canvas id="laserCanvas" class="absolute inset-0 w-full h-full z-20 cursor-crosshair touch-none"></canvas>
+        <canvas id="laserCanvas" class="absolute inset-0 w-full h-full z-20 touch-none"></canvas>
         
         <!-- THEATER SYNC OVERLAY -->
         <div id="syncOverlay" class="fixed inset-0 z-[100] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center transition-all duration-[400ms] opacity-0 pointer-events-none scale-110">
-            <h1 id="syncText" class="text-[200px] font-black text-rose-50 tracking-widest drop-shadow-[0_0_80px_rgba(244,63,94,1)] animate-bounce" style="font-family: 'Playfair Display', serif;">3</h1>
+            <h1 id="syncText" class="text-[90px] sm:text-[140px] md:text-[200px] text-center px-4 font-black text-rose-50 tracking-widest drop-shadow-[0_0_80px_rgba(244,63,94,1)] animate-bounce" style="font-family: 'Playfair Display', serif;">3</h1>
         </div>
 
-        <div id="controls" class="absolute bottom-8 left-1/2 -translate-x-1/2 glass-panel rounded-full px-8 py-4 flex items-center gap-6 transition-all duration-500 z-40 shadow-[0_10px_40px_rgba(225,29,72,0.2)] backdrop-blur-2xl border border-rose-900/40">
+        <div id="controls" class="absolute bottom-6 sm:bottom-8 left-1/2 -translate-x-1/2 max-w-[calc(100vw-1.5rem)] overflow-x-auto no-scrollbar glass-panel rounded-3xl sm:rounded-full px-3 sm:px-6 md:px-8 py-2.5 sm:py-4 flex items-center gap-1.5 sm:gap-4 md:gap-6 transition-all duration-500 z-40 shadow-[0_10px_40px_rgba(225,29,72,0.2)] backdrop-blur-2xl border border-rose-900/40">
             
-            <button id="micBtn" class="group relative p-3 rounded-2xl text-rose-300/60 hover:text-rose-100 hover:bg-rose-950/40 border border-transparent hover:border-rose-400/20 active:scale-90 transition-all duration-300 ease-out hidden hover:shadow-[0_0_15px_rgba(225,29,72,0.15)]">
+            <button id="micBtn" class="shrink-0 group relative p-2 sm:p-3 rounded-2xl text-rose-300/60 hover:text-rose-100 hover:bg-rose-950/40 border border-transparent hover:border-rose-400/20 active:scale-90 transition-all duration-300 ease-out hidden hover:shadow-[0_0_15px_rgba(225,29,72,0.15)]">
                 <div class="flex flex-col items-center gap-1">
                     <svg class="w-6 h-6 transform group-active:rotate-12 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path></svg>
                     <span id="micStatus" class="text-[9px] font-medium tracking-widest uppercase">Muted</span>
                 </div>
             </button>
 
-            <div class="w-px h-8 bg-rose-900/40 hidden md:block" id="controlSeparator"></div>
+            <button id="flipCameraBtn" type="button" class="shrink-0 group relative p-2 sm:p-3 rounded-2xl text-pink-300/80 hover:text-white hover:bg-pink-950/40 border border-transparent hover:border-pink-400/20 active:scale-90 transition-all duration-300 ease-out hidden hover:shadow-[0_0_15px_rgba(236,72,153,0.15)]">
+                <div class="flex flex-col items-center gap-1">
+                    <svg class="w-6 h-6 transform group-active:rotate-180 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                    <span id="flipCameraStatus" class="text-[9px] font-medium tracking-widest uppercase">Flip</span>
+                </div>
+            </button>
 
-            <button id="chatToggleBtn" class="group relative p-3 rounded-2xl text-rose-300/80 hover:text-white hover:bg-rose-950/40 border border-transparent hover:border-rose-400/20 active:scale-90 transition-all duration-300 ease-out hover:shadow-[0_0_15px_rgba(225,29,72,0.15)]">
+            <button id="animeBtn" type="button" class="shrink-0 group p-2 sm:p-3 rounded-2xl text-fuchsia-300/80 hover:text-fuchsia-200 hover:bg-fuchsia-950/40 border border-transparent hover:border-fuchsia-400/20 active:scale-90 transition-all duration-300 ease-out hidden hover:shadow-[0_0_15px_rgba(217,70,239,0.15)]">
+                <div class="flex flex-col items-center gap-1">
+                    <span id="animeIcon" class="text-[18px] leading-none mt-1 transform group-active:scale-110 transition-transform">🎬</span>
+                    <span id="animeStatus" class="text-[9px] font-medium tracking-widest uppercase">Movie</span>
+                </div>
+            </button>
+
+            <button id="subtitlesBtn" type="button" class="shrink-0 group p-2 sm:p-3 rounded-2xl text-amber-300/80 hover:text-amber-200 hover:bg-amber-950/40 border border-transparent hover:border-amber-400/20 active:scale-90 transition-all duration-300 ease-out hidden hover:shadow-[0_0_15px_rgba(245,158,11,0.15)]">
+                <div class="flex flex-col items-center gap-1">
+                    <span class="text-[18px] leading-none mt-1 transform group-active:scale-110 transition-transform">💬</span>
+                    <span id="subtitlesStatus" class="text-[9px] font-medium tracking-widest uppercase">Subs</span>
+                </div>
+            </button>
+
+            <div class="shrink-0 w-px h-8 bg-rose-900/40 hidden md:block" id="controlSeparator"></div>
+
+            <button id="chatToggleBtn" class="shrink-0 group relative p-2 sm:p-3 rounded-2xl text-rose-300/80 hover:text-white hover:bg-rose-950/40 border border-transparent hover:border-rose-400/20 active:scale-90 transition-all duration-300 ease-out hover:shadow-[0_0_15px_rgba(225,29,72,0.15)]">
                 <div class="flex flex-col items-center gap-1">
                     <svg class="w-6 h-6 transform group-active:-scale-x-100 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"></path></svg>
                     <span class="text-[9px] font-medium tracking-widest uppercase">Chat</span>
@@ -87,52 +131,66 @@
                 <span id="chatBadge" class="absolute top-2 right-2 w-2 h-2 bg-rose-500 rounded-full border border-[var(--glass-bg)] hidden animate-pulse shadow-[0_0_8px_rgba(244,63,94,1)]"></span>
             </button>
 
-            <button id="qualityBtn" class="group p-3 rounded-2xl text-emerald-400/80 hover:text-emerald-300 hover:bg-emerald-950/40 border border-transparent hover:border-emerald-400/20 active:scale-90 transition-all duration-300 ease-out hidden hover:shadow-[0_0_15px_rgba(16,185,129,0.15)]">
+            <button id="volumeBtn" type="button" class="shrink-0 group p-2 sm:p-3 rounded-2xl text-sky-300/80 hover:text-sky-200 hover:bg-sky-950/40 border border-transparent hover:border-sky-400/20 active:scale-90 transition-all duration-300 ease-out hidden hover:shadow-[0_0_15px_rgba(56,189,248,0.15)]">
                 <div class="flex flex-col items-center gap-1">
-                    <span class="text-lg font-bold font-mono leading-none mt-1 transform group-active:scale-110 transition-transform">HD</span>
-                    <span class="text-[9px] font-medium tracking-widest uppercase">Quality</span>
+                    <span id="volumeIcon" class="text-[18px] leading-none mt-1 transform group-active:scale-110 transition-transform">🔊</span>
+                    <span id="volumeStatus" class="text-[9px] font-medium tracking-widest uppercase">100%</span>
                 </div>
             </button>
 
-            <button id="nightBtn" class="group p-3 rounded-2xl text-indigo-300/80 hover:text-indigo-200 hover:bg-indigo-950/40 border border-transparent hover:border-indigo-400/20 active:scale-90 transition-all duration-300 ease-out hidden hover:shadow-[0_0_15px_rgba(99,102,241,0.15)]">
+            <button id="qualityBtn" class="shrink-0 group p-2 sm:p-3 rounded-2xl text-emerald-400/80 hover:text-emerald-300 hover:bg-emerald-950/40 border border-transparent hover:border-emerald-400/20 active:scale-90 transition-all duration-300 ease-out hidden hover:shadow-[0_0_15px_rgba(16,185,129,0.15)]">
+                <div class="flex flex-col items-center gap-1">
+                    <span id="qualityStatus" class="text-lg font-bold font-mono leading-none mt-1 transform group-active:scale-110 transition-transform">HD</span>
+                    <span aria-hidden="true" class="text-[9px] font-medium tracking-widest uppercase after:content-['Quality']"></span>
+                </div>
+            </button>
+
+            <button id="nightBtn" class="shrink-0 group p-2 sm:p-3 rounded-2xl text-indigo-300/80 hover:text-indigo-200 hover:bg-indigo-950/40 border border-transparent hover:border-indigo-400/20 active:scale-90 transition-all duration-300 ease-out hidden hover:shadow-[0_0_15px_rgba(99,102,241,0.15)]">
                 <div class="flex flex-col items-center gap-1">
                     <svg class="w-6 h-6 transform group-active:-rotate-12 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path></svg>
                     <span class="text-[9px] font-medium tracking-widest uppercase">Cozy</span>
                 </div>
             </button>
 
-            <div class="w-px h-8 bg-rose-900/40 hidden md:block"></div>
+            <div class="shrink-0 w-px h-8 bg-rose-900/40 hidden md:block"></div>
 
-            <button id="spatialBtn" class="group p-3 rounded-2xl text-teal-400/80 hover:text-teal-300 hover:bg-teal-950/40 border border-transparent hover:border-teal-400/20 active:scale-90 transition-all duration-300 ease-out hidden hover:shadow-[0_0_15px_rgba(20,184,166,0.15)]">
+            <button id="spatialBtn" class="shrink-0 group p-2 sm:p-3 rounded-2xl text-teal-400/80 hover:text-teal-300 hover:bg-teal-950/40 border border-transparent hover:border-teal-400/20 active:scale-90 transition-all duration-300 ease-out hidden hover:shadow-[0_0_15px_rgba(20,184,166,0.15)]">
                 <div class="flex flex-col items-center gap-1">
-                    <span class="text-[18px] leading-none mt-1 transform group-active:-scale-x-100 transition-transform">🎧</span>
-                    <span id="spatialStatus" class="text-[9px] font-medium tracking-widest uppercase">Spatial: ON</span>
+                    <span class="text-[18px] leading-none mt-1 transform group-active:scale-110 transition-transform">✨</span>
+                    <span id="spatialStatus" class="text-[9px] font-medium tracking-widest uppercase">Glow: ON</span>
                 </div>
             </button>
 
-            <button id="pipBtn" class="group p-3 rounded-2xl text-rose-300/50 hover:text-rose-100 hover:bg-rose-950/40 border border-transparent hover:border-rose-400/20 active:scale-90 transition-all duration-300 ease-out hidden hover:shadow-[0_0_15px_rgba(225,29,72,0.15)]">
+            <button id="pipBtn" class="shrink-0 group p-2 sm:p-3 rounded-2xl text-rose-300/50 hover:text-rose-100 hover:bg-rose-950/40 border border-transparent hover:border-rose-400/20 active:scale-90 transition-all duration-300 ease-out hidden hover:shadow-[0_0_15px_rgba(225,29,72,0.15)]">
                 <div class="flex flex-col items-center gap-1">
                     <svg class="w-6 h-6 transform group-active:scale-110 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2" ry="2" stroke-width="1.5"/><rect x="12" y="12" width="6" height="4" rx="1" stroke-width="1.5"/></svg>
                     <span class="text-[9px] font-medium tracking-widest uppercase">PiP</span>
                 </div>
             </button>
 
-            <button id="syncBtn" class="group p-3 rounded-2xl text-rose-400 hover:text-rose-200 hover:bg-rose-950/40 border border-transparent hover:border-rose-400/20 active:scale-90 transition-all duration-300 ease-out hidden hover:shadow-[0_0_15px_rgba(225,29,72,0.15)]">
+            <button id="syncBtn" class="shrink-0 group p-2 sm:p-3 rounded-2xl text-rose-400 hover:text-rose-200 hover:bg-rose-950/40 border border-transparent hover:border-rose-400/20 active:scale-90 transition-all duration-300 ease-out hidden hover:shadow-[0_0_15px_rgba(225,29,72,0.15)]">
                 <div class="flex flex-col items-center gap-1">
                     <svg class="w-6 h-6 transform group-active:rotate-180 transition-transform duration-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                     <span class="text-[9px] font-medium tracking-widest uppercase text-rose-300">Sync</span>
                 </div>
             </button>
 
-            <button id="fsBtn" class="group p-3 rounded-2xl text-rose-300/60 hover:text-white hover:bg-rose-950/40 border border-transparent hover:border-rose-400/20 active:scale-90 transition-all duration-300 ease-out hover:shadow-[0_0_15px_rgba(225,29,72,0.15)]">
+            <button id="fsBtn" class="shrink-0 group p-2 sm:p-3 rounded-2xl text-rose-300/60 hover:text-white hover:bg-rose-950/40 border border-transparent hover:border-rose-400/20 active:scale-90 transition-all duration-300 ease-out hover:shadow-[0_0_15px_rgba(225,29,72,0.15)]">
                 <div class="flex flex-col items-center gap-1">
                     <svg class="w-6 h-6 transform group-active:scale-125 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"></path></svg>
                     <span class="text-[9px] font-medium tracking-widest uppercase">Full</span>
                 </div>
             </button>
+
+            <button id="stopStreamBtn" type="button" class="shrink-0 group p-2 sm:p-3 rounded-2xl text-red-400/80 hover:text-red-200 hover:bg-red-950/50 border border-transparent hover:border-red-400/30 active:scale-90 transition-all duration-300 ease-out hidden hover:shadow-[0_0_15px_rgba(239,68,68,0.2)]">
+                <div class="flex flex-col items-center gap-1">
+                    <span class="text-[18px] leading-none mt-1 transform group-active:scale-110 transition-transform">⏹️</span>
+                    <span class="text-[9px] font-medium tracking-widest uppercase">Stop</span>
+                </div>
+            </button>
         </div>
 
-        <div id="reactionBar" class="absolute bottom-32 right-6 flex flex-col gap-4 z-40 transition-transform duration-500 ease-in-out">
+        <div id="reactionBar" class="absolute bottom-28 sm:bottom-32 right-4 sm:right-6 flex flex-col gap-4 z-40 transition-transform duration-500 ease-in-out">
             <button class="text-3xl hover:scale-125 transition-transform active:scale-90 filter drop-shadow-lg" onclick="sendReaction('❤️')">❤️</button>
             <button class="text-3xl hover:scale-125 transition-transform active:scale-90 filter drop-shadow-lg" onclick="sendReaction('😂')">😂</button>
             <button class="text-3xl hover:scale-125 transition-transform active:scale-90 filter drop-shadow-lg" onclick="sendReaction('😮')">😮</button>
@@ -140,7 +198,7 @@
         </div>
     </div>
 
-    <div id="chatPanel" class="fixed inset-y-0 right-0 w-80 glass-panel border-l border-white/10 transform translate-x-full transition-transform duration-300 ease-out z-[70] flex flex-col shadow-2xl bg-rose-950/40">
+    <div id="chatPanel" class="fixed inset-y-0 right-0 w-full sm:w-80 glass-panel border-l border-white/10 transform translate-x-full transition-transform duration-300 ease-out z-[70] flex flex-col shadow-2xl bg-rose-950/40">
         <div class="flex items-center justify-between p-5 border-b border-white/10 bg-black/20 backdrop-blur-sm">
             <h2 class="text-xs font-bold uppercase tracking-widest text-rose-300">Intimate Chat</h2>
             <button id="closeChatBtn" class="p-2 text-rose-400 hover:text-white transition-colors hover:rotate-90 duration-300">
@@ -148,8 +206,8 @@
             </button>
         </div>
 
-        <div id="chatMessages" class="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin">
-            <div class="text-center py-10 opacity-50">
+        <div id="chatMessages" class="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin select-text">
+            <div id="chatEmptyState" class="text-center py-10 opacity-50">
                 <div class="w-12 h-12 bg-white/5 rounded-full mx-auto flex items-center justify-center mb-3">
                     <span class="text-xl">🥂</span>
                 </div>
@@ -160,7 +218,7 @@
         <div class="p-4 bg-black/20 border-t border-white/10 backdrop-blur-md">
             <form id="chatForm" class="flex gap-2">
                 <input type="text" id="chatInput" placeholder="Message your partner..." autocomplete="off"
-                    class="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:bg-white/10 focus:border-rose-500 transition-all placeholder-rose-300/50">
+                    class="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-base sm:text-sm text-white select-text focus:outline-none focus:bg-white/10 focus:border-rose-500 transition-all placeholder-rose-300/50">
                 <button type="submit" id="chatSendBtn" class="bg-rose-600 hover:bg-rose-500 text-white rounded-xl px-4 transition-colors shadow-lg shadow-rose-900/20">
                     <svg class="w-5 h-5 transform rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path></svg>
                 </button>
@@ -170,24 +228,50 @@
 
     <script type="module">
         import { io } from 'https://cdn.socket.io/4.7.5/socket.io.esm.min.js';
+        import { initAmbilight, initLaser } from './js/modules/features/overlays.js';
+        import { toggleFullScreen, generateRoomId } from './js/ui.js';
+        import { getDeviceCapabilities, getCapabilityDiagnostics } from './js/modules/core/config.js';
+        import { convertSrtToVtt } from './js/modules/media/capture.js';
         
-        // --- 1. SETUP SHARED SOCKET ---
+        // --- 1. SETUP SHARED SOCKET & DETECT CAPABILITIES ---
         const socket = io(); 
+        const caps = getDeviceCapabilities();
         
-        // --- 2. PARSE PARAMS ---
+        // --- 2. PARSE & NORMALIZE PARAMS ---
+        const RESERVED_ROOM_IDS = new Set([
+            '__proto__', 'constructor', 'prototype', 'tostring', 'valueof',
+            'hasownproperty', 'isprototypeof', 'propertyisenumerable',
+            'tolocalestring', '__definegetter__', '__definesetter__',
+            '__lookupgetter__', '__lookupsetter__'
+        ]);
+        const isValidRoomCode = (id) => typeof id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(id) && !RESERVED_ROOM_IDS.has(id.toLowerCase());
+
         const params = new URLSearchParams(window.location.search);
-        const roomId = params.get('room');
-        const role = params.get('role');
+        const rawRoomParam = params.get('room');
+        let roomId = rawRoomParam;
+        if (!isValidRoomCode(roomId)) {
+            const sanitized = typeof rawRoomParam === 'string'
+                ? rawRoomParam.trim().replace(/\s+/g, '-').replace(/[^A-Za-z0-9_-]/g, '').substring(0, 12).toUpperCase()
+                : '';
+            roomId = isValidRoomCode(sanitized) ? sanitized : generateRoomId();
+            params.set('room', roomId);
+            if (window.history && typeof window.history.replaceState === 'function') {
+                window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}`);
+            }
+        }
+
+        let role = params.get('role');
         const username = params.get('name') || (role === 'host' ? 'Host' : 'Viewer');
+        window.currentUserRole = role;
+        let roomMembershipRole = role === 'host' ? 'broadcaster' : 'viewer';
         
         // --- 3. DOM ELEMENT REFERENCES ---
-        // (Matched exactly to IDs above)
         const roomDisplay = document.getElementById('roomDisplay');
         const video = document.getElementById('mainVideo');
         const curtain = document.getElementById('curtain');
         const startBtn = document.getElementById('startActionBtn');
         const btnLabel = document.getElementById('btnLabel');
-        const btnIcon = document.getElementById('btnIcon'); // New ID
+        const btnIcon = document.getElementById('btnIcon');
         const wrapper = document.getElementById('video-wrapper');
         const uiLayer = document.getElementById('ui-layer');
         const controls = document.getElementById('controls');
@@ -203,6 +287,19 @@
 
         const micBtn = document.getElementById('micBtn');
         const micStatus = document.getElementById('micStatus');
+        const flipCameraBtn = document.getElementById('flipCameraBtn');
+        const flipCameraStatus = document.getElementById('flipCameraStatus');
+        const animeBtn = document.getElementById('animeBtn');
+        const animeIcon = document.getElementById('animeIcon');
+        const animeStatus = document.getElementById('animeStatus');
+        const subtitlesBtn = document.getElementById('subtitlesBtn');
+        const subtitlesStatus = document.getElementById('subtitlesStatus');
+        const volumeBtn = document.getElementById('volumeBtn');
+        const volumeIcon = document.getElementById('volumeIcon');
+        const volumeStatus = document.getElementById('volumeStatus');
+        const stopStreamBtn = document.getElementById('stopStreamBtn');
+        const videoFileInput = document.getElementById('videoFileInput');
+        const subtitleFileInput = document.getElementById('subtitleFileInput');
         const qualityBtn = document.getElementById('qualityBtn'); 
         const nightBtn = document.getElementById('nightBtn');
         const pipBtn = document.getElementById('pipBtn');
@@ -211,44 +308,110 @@
         const syncBtn = document.getElementById('syncBtn');
         const syncOverlay = document.getElementById('syncOverlay');
         const syncText = document.getElementById('syncText');
-        const sep = document.getElementById('controlSeparator'); // Ref for Host logic
+        const sep = document.getElementById('controlSeparator');
 
         // Display Room Code
         roomDisplay.innerText = roomId || "ERROR";
+
+        // Non-intrusive Toast Notification Helper with Safe DOM Construction
+        function showToast(message, type = 'info', durationMs = 6000) {
+            const container = document.getElementById('toastContainer');
+            if (!container) return null;
+
+            // Validate and normalize toast type
+            const validTypes = ['info', 'warning', 'error', 'success'];
+            const normalizedType = typeof type === 'string' && validTypes.includes(type.toLowerCase()) ? type.toLowerCase() : 'info';
+
+            // Validate duration
+            const validDuration = typeof durationMs === 'number' && durationMs > 0 ? durationMs : 6000;
+
+            // Convert message safely to string
+            const messageStr = typeof message === 'string' ? message : String(message ?? '');
+
+            const toast = document.createElement('div');
+            toast.className = `glass-panel rounded-2xl p-4 flex items-start gap-3 pointer-events-auto shadow-2xl border animate-fade-in text-xs max-w-sm toast-${normalizedType}`;
+            
+            let icon = 'ℹ️';
+            let borderColor = 'border-rose-500/30';
+            if (normalizedType === 'warning') {
+                icon = '⚠️';
+                borderColor = 'border-amber-500/50';
+            } else if (normalizedType === 'error') {
+                icon = '❌';
+                borderColor = 'border-red-500/50';
+            } else if (normalizedType === 'success') {
+                icon = '✅';
+                borderColor = 'border-emerald-500/50';
+            }
+            toast.classList.add(borderColor);
+            
+            // Icon element
+            const iconSpan = document.createElement('span');
+            iconSpan.className = 'text-base select-none';
+            iconSpan.textContent = icon;
+
+            // Message text container (textContent prevents HTML / script injection)
+            const textDiv = document.createElement('div');
+            textDiv.className = 'flex-1 leading-relaxed text-slate-200 break-words';
+            textDiv.textContent = messageStr;
+
+            // Close button
+            const closeBtn = document.createElement('button');
+            closeBtn.className = 'text-slate-400 hover:text-white p-1 text-sm font-bold select-none leading-none';
+            closeBtn.setAttribute('type', 'button');
+            closeBtn.setAttribute('aria-label', 'Close toast');
+            closeBtn.textContent = '×';
+
+            toast.appendChild(iconSpan);
+            toast.appendChild(textDiv);
+            toast.appendChild(closeBtn);
+
+            let timeoutId = null;
+            closeBtn.onclick = () => {
+                if (timeoutId) clearTimeout(timeoutId);
+                toast.remove();
+            };
+
+            container.appendChild(toast);
+
+            timeoutId = setTimeout(() => {
+                if (toast.parentNode) toast.remove();
+            }, validDuration);
+
+            return toast;
+        }
+        window.showToast = showToast;
+
+        // Diagnostics on insecure context
+        if (!caps.isSecureContext) {
+            showToast(getCapabilityDiagnostics('insecure_context'), 'warning', 10000);
+        }
         
         // --- 4. INTERACTIONS ---
         
         // Copy Code Logic
-        document.getElementById('copyArea').onclick = () => {
-            navigator.clipboard.writeText(roomId);
+        document.getElementById('copyArea').onclick = async () => {
+            try {
+                if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+                    await navigator.clipboard.writeText(roomId);
+                }
+            } catch (e) {
+                console.warn("[UI] Clipboard write failed:", e);
+            }
             const originalColor = roomDisplay.style.color;
             roomDisplay.style.color = "#4ade80"; // Turn Green
             setTimeout(() => roomDisplay.style.color = originalColor, 500);
         };
 
-        // True Native OS Fullscreen Logic
-        const toggleTrueFullscreen = () => {
-            const el = document.documentElement; // Target ENTIRE tab
-            if (!document.fullscreenElement && !document.webkitFullscreenElement) {
-                if (el.requestFullscreen) el.requestFullscreen();
-                else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
-                else if (el.msRequestFullscreen) el.msRequestFullscreen();
-            } else {
-                if (document.exitFullscreen) document.exitFullscreen();
-                else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
-                else if (document.msExitFullscreen) document.msExitFullscreen();
-            }
-        };
-
+        // Cross-Platform Fullscreen / Theater Mode
         document.getElementById('fsBtn').onclick = (e) => {
             e.stopPropagation();
-            toggleTrueFullscreen();
+            toggleFullScreen(document.documentElement);
         };
 
-        // UI Auto-Hide Logic (Updated for new CSS classes)
+        // UI Auto-Hide Logic
         let fadeTimeout;
         const showUI = () => {
-            // Show UI: Reset transforms
             uiLayer.classList.remove('-translate-y-full');
             controls.classList.remove('translate-y-[200%]');
             reactionBar.classList.remove('translate-x-[200%]');
@@ -256,14 +419,13 @@
             
             clearTimeout(fadeTimeout);
             fadeTimeout = setTimeout(() => {
-                // Only hide if Chat is NOT open
                 if (chatPanel.classList.contains('translate-x-full')) { 
-                    uiLayer.classList.add('-translate-y-full'); // Slide up
-                    controls.classList.add('translate-y-[200%]'); // Slide down
-                    reactionBar.classList.add('translate-x-[200%]'); // Slide right
+                    uiLayer.classList.add('-translate-y-full');
+                    controls.classList.add('translate-y-[200%]');
+                    reactionBar.classList.add('translate-x-[200%]');
                     wrapper.style.cursor = 'none';
                 }
-            }, 3500); // 3.5 seconds delay
+            }, 3500);
         };
         
         document.body.addEventListener('mousemove', showUI);
@@ -271,18 +433,48 @@
         document.body.addEventListener('click', showUI);
         showUI(); // Init
 
-        // Chat Toggle Logic
-        function toggleChat() {
-            chatPanel.classList.toggle('translate-x-full');
-            // If opening, hide badge
-            if (!chatPanel.classList.contains('translate-x-full')) {
-                chatBadge.classList.add('hidden');
+        // Chat Toggle Logic (with iPad/Tablet responsive dock alignment so chat never covers controls)
+        function syncControlsWithChatPanel() {
+            const isChatOpen = !chatPanel.classList.contains('translate-x-full');
+            if (isChatOpen && window.innerWidth >= 640) {
+                controls.style.left = 'calc(50% - 10rem)';
+                controls.style.maxWidth = 'calc(100vw - 21.5rem)';
+            } else {
+                controls.style.left = '';
+                controls.style.maxWidth = '';
             }
         }
+        function toggleChat() {
+            chatPanel.classList.toggle('translate-x-full');
+            if (!chatPanel.classList.contains('translate-x-full')) {
+                chatBadge.classList.add('hidden');
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            }
+            syncControlsWithChatPanel();
+        }
         chatToggleBtn.onclick = (e) => { e.stopPropagation(); toggleChat(); };
-        closeChatBtn.onclick = () => chatPanel.classList.add('translate-x-full');
+        closeChatBtn.onclick = () => {
+            chatPanel.classList.add('translate-x-full');
+            syncControlsWithChatPanel();
+        };
+        window.addEventListener('resize', syncControlsWithChatPanel);
 
-        // Chat Send Logic
+        // Mobile Virtual Keyboard Viewport Adaptation (iOS / iPadOS Safari & Android Chrome)
+        if (window.visualViewport) {
+            const syncChatViewport = () => {
+                if (!chatPanel) return;
+                chatPanel.style.height = `${window.visualViewport.height}px`;
+                chatPanel.style.top = `${window.visualViewport.offsetTop}px`;
+                if (!chatPanel.classList.contains('translate-x-full')) {
+                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                }
+            };
+            window.visualViewport.addEventListener('resize', syncChatViewport);
+            window.visualViewport.addEventListener('scroll', syncChatViewport);
+        }
+
+        // Chat Send Logic (with offline/reconnecting queue so no message is lost during brief mobile network handoffs)
+        const pendingChatQueue = [];
         chatForm.onsubmit = (e) => {
             e.preventDefault();
             const text = chatInput.value.trim();
@@ -292,38 +484,75 @@
                     text: text,
                     time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                 };
-                socket.emit('chat-message', roomId, payload);
+                if (socket.connected) {
+                    socket.emit('chat-message', roomId, payload);
+                } else {
+                    pendingChatQueue.push(payload);
+                    socket.connect();
+                }
                 chatInput.value = '';
             }
         };
 
-        // Render Message Helper
+        // Render Message Helper with Safe DOM Construction
         function renderMessage(msg) {
-            const isMe = msg.user === username;
-            const div = document.createElement('div');
-            div.className = `flex flex-col ${isMe ? 'items-end' : 'items-start'} animate-fade-in`;
-            div.innerHTML = `
-                <div class="text-[10px] text-rose-300/70 mb-1 px-1 font-mono">${msg.user} • ${msg.time}</div>
-                <div class="${isMe ? 'bg-rose-600 text-white' : 'bg-white/10 text-rose-100'} rounded-2xl rounded-tr-sm px-4 py-2 max-w-[85%] text-sm leading-relaxed shadow-sm backdrop-blur-sm border border-white/5">
-                    ${msg.text}
-                </div>
-            `;
-            chatMessages.appendChild(div);
+            if (!msg || typeof msg !== 'object') return;
+
+            const userStr = typeof msg.user === 'string' ? msg.user : 'Anonymous';
+            const timeStr = typeof msg.time === 'string' ? msg.time : '';
+            const textStr = typeof msg.text === 'string' ? msg.text : String(msg.text ?? '');
+
+            // Names are display-only and may be shared (for example, two Anonymous viewers).
+            // Use the authoritative Socket.IO sender ID whenever the server provides it.
+            const isMe = userStr !== 'System' && (
+                typeof msg.senderId === 'string' ? msg.senderId === socket.id : userStr === username
+            );
+            
+            // Outer container
+            const container = document.createElement('div');
+            container.className = `flex flex-col ${isMe ? 'items-end' : 'items-start'} animate-fade-in`;
+
+            // Meta info (username • timestamp)
+            const metaDiv = document.createElement('div');
+            metaDiv.className = 'text-[10px] text-rose-300/70 mb-1 px-1 font-mono';
+            metaDiv.textContent = timeStr ? `${userStr} • ${timeStr}` : userStr;
+
+            // Message text bubble
+            const bubbleDiv = document.createElement('div');
+            bubbleDiv.className = `${isMe ? 'bg-rose-600 text-white' : 'bg-white/10 text-rose-100'} rounded-2xl rounded-tr-sm px-4 py-2 max-w-[85%] text-sm leading-relaxed shadow-sm backdrop-blur-sm border border-white/5 break-words whitespace-pre-wrap`;
+            bubbleDiv.textContent = textStr;
+
+            container.appendChild(metaDiv);
+            container.appendChild(bubbleDiv);
+
+            const emptyPlaceholder = document.getElementById('chatEmptyState');
+            if (emptyPlaceholder) emptyPlaceholder.classList.add('hidden');
+            chatMessages.appendChild(container);
             chatMessages.scrollTop = chatMessages.scrollHeight;
         }
+        window.renderMessage = renderMessage;
 
         // Socket Listeners (Chat)
-        socket.on('chat-history', (history) => history.forEach(msg => renderMessage(msg)));
+        socket.on('chat-history', (history) => {
+            if (!Array.isArray(history)) return;
+            Array.from(chatMessages.children).forEach(el => {
+                if (el.id !== 'chatEmptyState') el.remove();
+            });
+            history.forEach(msg => renderMessage(msg));
+        });
         socket.on('chat-message', (msg) => {
             renderMessage(msg);
-            // Show badge if chat is closed
             if (chatPanel.classList.contains('translate-x-full')) {
                 chatBadge.classList.remove('hidden');
+                // Reveal auto-hidden toolbar when a partner sends a chat message so the badge is visible
+                if (msg && msg.user !== 'System' && msg.senderId !== socket.id) {
+                    showUI();
+                }
             }
         });
 
-        // Setup System Greeting (Zoom style)
-        socket.on('connect', () => {
+        // Setup System Greeting
+        window.emitJoinGreeting = () => {
             if (!window.hasEmittedJoin && username) {
                 const payload = {
                     user: "System",
@@ -333,91 +562,93 @@
                 socket.emit('chat-message', roomId, payload);
                 window.hasEmittedJoin = true;
             }
-        });
+        };
 
-        // Reaction Logic
-        window.sendReaction = (emoji) => socket.emit('reaction', roomId, emoji);
+        // Join before the curtain action so the lobby can recognize an awaiting host,
+        // chat history is available, and a duplicate host is demoted before capture.
+        const joinRoomMembership = () => {
+            socket.emit('join-room', roomId, roomMembershipRole, username);
+            window.emitJoinGreeting();
+            while (pendingChatQueue.length > 0) {
+                const queuedMsg = pendingChatQueue.shift();
+                socket.emit('chat-message', roomId, queuedMsg);
+            }
+        };
+        socket.on('connect', joinRoomMembership);
+        if (socket.connected) joinRoomMembership();
+
+        // Foreground Wake & Render Free-Tier Keep-Alive
+        if ('serviceWorker' in navigator && window.isSecureContext) {
+            navigator.serviceWorker.register('/sw.js').catch(() => {});
+        }
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+                if (socket.disconnected) {
+                    socket.connect();
+                }
+                if (video && video.srcObject && video.paused) {
+                    video.play().catch(() => {});
+                }
+                document.querySelectorAll('audio').forEach(a => {
+                    if (a.srcObject && a.paused) a.play().catch(() => {});
+                });
+            }
+        });
+        setInterval(() => {
+            if (document.visibilityState === 'visible') {
+                fetch('/health', { cache: 'no-store' }).catch(() => {});
+            }
+        }, 240000); // Every 4 minutes to prevent free-tier cloud container idle spin-down
+
+        // Reaction Logic (Bounded & Throttled)
+        let lastReactionSend = 0;
+        window.sendReaction = (emoji) => {
+            const now = Date.now();
+            if (now - lastReactionSend < 250) return;
+            if (typeof emoji === 'string' && emoji.length <= 8) {
+                lastReactionSend = now;
+                socket.emit('reaction', roomId, emoji);
+            }
+        };
+
         socket.on('reaction', (emoji) => {
+            if (typeof emoji !== 'string' || emoji.length > 8) return;
+            const existingBubbles = document.querySelectorAll('.emoji-bubble');
+            if (existingBubbles.length > 15) {
+                existingBubbles[0].remove();
+            }
             const el = document.createElement('div');
             el.innerText = emoji;
             el.className = 'emoji-bubble';
-            // Randomize horizontal position
             el.style.right = `${30 + (Math.random() * 50 - 25)}px`;
             document.body.appendChild(el);
-            setTimeout(() => el.remove(), 2000);
+            setTimeout(() => {
+                if (el.parentNode) el.parentNode.removeChild(el);
+            }, 2000);
         });
 
-        // --- AMBILIGHT LOGIC ---
+        // --- AMBILIGHT & LASER OVERLAYS ---
         const ambilightCanvas = document.getElementById('ambilightCanvas');
-        const ambCtx = ambilightCanvas.getContext('2d');
-        function loopAmbilight() {
-            if (!video.paused && !video.ended && video.readyState >= 2) {
-                ambCtx.drawImage(video, 0, 0, ambilightCanvas.width, ambilightCanvas.height);
-            }
-            requestAnimationFrame(loopAmbilight);
-        }
-        video.addEventListener('loadedmetadata', () => {
-            ambilightCanvas.width = video.videoWidth || 640;
-            ambilightCanvas.height = video.videoHeight || 360;
-        });
-        requestAnimationFrame(loopAmbilight);
+        const ambilightCtrl = initAmbilight(video, ambilightCanvas);
 
-        // --- LASER POINTER LOGIC ---
         const laserCanvas = document.getElementById('laserCanvas');
-        const laserCtx = laserCanvas.getContext('2d');
-        let isDrawing = false;
-        let lastLaserTime = 0; // [FIX] Track idle time
-        
-        
-        function resizeLaserCanvas() {
-            laserCanvas.width = window.innerWidth;
-            laserCanvas.height = window.innerHeight;
-        }
-        window.addEventListener('resize', resizeLaserCanvas);
-        resizeLaserCanvas();
+        initLaser(laserCanvas, socket, roomId);
 
-        function drawLaser(x, y) {
-            laserCtx.font = "24px sans-serif";
-            laserCtx.shadowBlur = 15;
-            laserCtx.shadowColor = '#ff0055';
-            laserCtx.textAlign = "center";
-            laserCtx.textBaseline = "middle";
-            laserCtx.fillText("❤️", x, y);
-        }
-        
-        // Elegant trail fade
-        setInterval(() => {
-            if (Date.now() - lastLaserTime > 1500) {
-                // [FIX] Zeno's paradox prevention: Wipe lingering 1% alpha artifacts after 1.5s idle
-                laserCtx.clearRect(0, 0, laserCanvas.width, laserCanvas.height);
-            } else {
-                laserCtx.globalCompositeOperation = 'destination-out';
-                laserCtx.fillStyle = 'rgba(255, 255, 255, 0.15)';
-                laserCtx.fillRect(0, 0, laserCanvas.width, laserCanvas.height);
-                laserCtx.globalCompositeOperation = 'source-over';
+        // Ambilight Glow Toggle (Wired for both Host and Viewer roles)
+        spatialBtn.onclick = (e) => {
+            e.stopPropagation();
+            const isGlowActive = !spatialStatus.innerText.includes('ON');
+            if (ambilightCtrl && typeof ambilightCtrl.toggle === 'function') {
+                ambilightCtrl.toggle(isGlowActive);
             }
-        }, 30);
-
-        laserCanvas.addEventListener('pointerdown', (e) => { isDrawing = true; emitLaser(e); });
-        laserCanvas.addEventListener('pointermove', (e) => { if (isDrawing) emitLaser(e); });
-        laserCanvas.addEventListener('pointerup', () => isDrawing = false);
-        laserCanvas.addEventListener('pointerleave', () => isDrawing = false);
-        
-        function emitLaser(e) {
-            const rect = laserCanvas.getBoundingClientRect();
-            const x = (e.clientX - rect.left) / laserCanvas.width;
-            const y = (e.clientY - rect.top) / laserCanvas.height;
-            lastLaserTime = Date.now(); // Update Tracker
-            drawLaser(e.clientX - rect.left, e.clientY - rect.top);
-            socket.emit('laser', roomId, {x, y});
-        }
-        
-        socket.on('laser', (data) => {
-            const actualX = data.x * laserCanvas.width;
-            const actualY = data.y * laserCanvas.height;
-            lastLaserTime = Date.now(); // Update Tracker
-            drawLaser(actualX, actualY);
-        });
+            if (ambilightCanvas) {
+                ambilightCanvas.classList.toggle('opacity-80', isGlowActive);
+                ambilightCanvas.classList.toggle('opacity-0', !isGlowActive);
+            }
+            spatialStatus.innerText = `Glow: ${isGlowActive ? 'ON' : 'OFF'}`;
+            spatialBtn.classList.toggle('text-teal-400/80', isGlowActive);
+            spatialBtn.classList.toggle('text-slate-400', !isGlowActive);
+        };
 
         // --- PICTURE-IN-PICTURE (PiP) LOGIC ---
         document.getElementById('pipBtn').onclick = async (e) => {
@@ -428,7 +659,7 @@
                 } else if (video.requestPictureInPicture) {
                     await video.requestPictureInPicture();
                 } else {
-                    alert("PiP not supported directly on this browser version.");
+                    showToast("Picture-in-Picture is not supported on this browser version.", "warning");
                 }
             } catch (err) {
                 console.error("PiP Error:", err);
@@ -459,7 +690,7 @@
                     setTimeout(() => {
                         syncOverlay.classList.remove('opacity-100', 'scale-100');
                         syncOverlay.classList.add('opacity-0', 'pointer-events-none', 'scale-110');
-                        setTimeout(() => isSyncing = false, 400); // Allow fadeout before unlocking
+                        setTimeout(() => isSyncing = false, 400);
                     }, 1000);
                 }
             }, 1000);
@@ -468,66 +699,379 @@
         socket.on('sync-play', () => runSyncSequence());
         syncBtn.onclick = (e) => {
             e.stopPropagation();
+            runSyncSequence();
             socket.emit('sync-play', roomId);
         };
 
-        // --- 5. ROLE SPECIFIC LOGIC ---
+        // --- SUBTITLE LOADER (.SRT & .VTT) FOR MOVIES & ANIME ---
+        let activeSubtitleUrl = null;
+        window.loadSubtitleText = (rawText, label = 'Subtitles') => {
+            if (!video || typeof rawText !== 'string') return false;
+            const vttContent = convertSrtToVtt(rawText);
+            if (!vttContent) return false;
+            if (activeSubtitleUrl) {
+                try { URL.revokeObjectURL(activeSubtitleUrl); } catch (e) {}
+            }
+            const blob = new Blob([vttContent], { type: 'text/vtt' });
+            activeSubtitleUrl = URL.createObjectURL(blob);
+
+            Array.from(video.querySelectorAll('track')).forEach(t => t.remove());
+            const trackEl = document.createElement('track');
+            trackEl.kind = 'subtitles';
+            trackEl.label = label;
+            trackEl.srclang = 'en';
+            trackEl.default = true;
+            trackEl.src = activeSubtitleUrl;
+            video.appendChild(trackEl);
+
+            if (video.textTracks && video.textTracks[0]) {
+                video.textTracks[0].mode = 'showing';
+            }
+            if (subtitlesStatus) subtitlesStatus.innerText = 'Subs: ON';
+            return true;
+        };
+
+        if (subtitlesBtn && subtitleFileInput) {
+            subtitlesBtn.onclick = (e) => {
+                e.stopPropagation();
+                subtitleFileInput.click();
+            };
+            subtitleFileInput.onchange = async () => {
+                const file = subtitleFileInput.files && subtitleFileInput.files[0];
+                if (!file) return;
+                try {
+                    const text = await file.text();
+                    if (window.loadSubtitleText(text, file.name)) {
+                        showToast(`Subtitles loaded: ${file.name}`, 'success', 4000);
+                    }
+                } catch (err) {
+                    showToast('Could not read subtitle file.', 'error', 4000);
+                }
+                subtitleFileInput.value = '';
+            };
+        }
+
+        // --- VIEWER VOLUME CONTROL (100% -> 50% -> Mute) ---
+        let viewerVolumeIndex = 0;
+        const volumeSteps = [
+            { vol: 1.0, muted: false, icon: '🔊', label: '100%' },
+            { vol: 0.5, muted: false, icon: '🔉', label: '50%' },
+            { vol: 0.0, muted: true,  icon: '🔇', label: 'Mute' }
+        ];
+        if (volumeBtn) {
+            volumeBtn.onclick = (e) => {
+                e.stopPropagation();
+                viewerVolumeIndex = (viewerVolumeIndex + 1) % volumeSteps.length;
+                const step = volumeSteps[viewerVolumeIndex];
+                video.muted = step.muted;
+                video.volume = step.vol;
+                if (volumeIcon) volumeIcon.innerText = step.icon;
+                if (volumeStatus) volumeStatus.innerText = step.label;
+            };
+        }
+
+        // --- HOST STOP / SWITCH STREAM BUTTON ---
+        if (stopStreamBtn) {
+            stopStreamBtn.onclick = (e) => {
+                e.stopPropagation();
+                if (typeof window.stopBroadcast === 'function') {
+                    window.stopBroadcast('user_stopped');
+                }
+            };
+        }
+
+        // Helper: Switch dynamically from Host to Viewer mode without reloading
+        function switchToViewerMode(options = {}) {
+            const { alreadyDemotedOnServer = false } = options;
+            if (typeof window.stopBroadcast === 'function' && window.broadcaster && window.broadcaster.stream) {
+                window.stopBroadcast('demoted');
+            }
+            const audienceWidget = document.getElementById('audienceWidget');
+            if (audienceWidget) audienceWidget.remove();
+
+            role = 'viewer';
+            roomMembershipRole = 'viewer';
+            window.currentUserRole = 'viewer';
+            window.currentHostMode = 'viewer';
+            window.toggleHostMic = null;
+
+            if (!alreadyDemotedOnServer) {
+                socket.emit('join-room', roomId, 'viewer', username);
+            }
+
+            const chooser = document.getElementById('hostModeChooser');
+            if (chooser) chooser.classList.add('hidden');
+            if (flipCameraBtn) flipCameraBtn.classList.add('hidden');
+            if (animeBtn) animeBtn.classList.add('hidden');
+            if (subtitlesBtn) subtitlesBtn.classList.add('hidden');
+            if (stopStreamBtn) stopStreamBtn.classList.add('hidden');
+
+            micBtn.classList.remove('hidden', 'text-red-400', 'bg-red-500/20', 'text-slate-400');
+            micBtn.classList.add('text-rose-300/60');
+            micStatus.innerText = 'Muted';
+            micBtn.onclick = null;
+
+            if (sep) sep.classList.remove('hidden');
+            if (volumeBtn) volumeBtn.classList.remove('hidden');
+            qualityBtn.classList.remove('hidden');
+            nightBtn.classList.remove('hidden');
+            pipBtn.classList.remove('hidden');
+            syncBtn.classList.remove('hidden');
+            spatialBtn.classList.remove('hidden');
+
+            curtain.classList.remove('hidden', 'pointer-events-none', 'opacity-0');
+            btnLabel.innerText = "PREPARING THEATER...";
+            btnIcon.innerText = "🍿";
+
+            import('./js/viewer.js').then(module => {
+                btnLabel.innerText = "JOIN MOVIE";
+                startBtn.onclick = () => {
+                    curtain.classList.add('opacity-0', 'pointer-events-none');
+                    setTimeout(() => curtain.classList.add('hidden'), 700);
+                    video.muted = false;
+                    module.init(roomId, video, socket, username);
+                };
+            });
+            if (!alreadyDemotedOnServer) {
+                showToast("Switched to Viewer mode. Click 'Join Movie' when ready.", "info", 4000);
+            }
+        }
+
+        socket.on('role-demoted', () => {
+            if (role !== 'host') return;
+            if (typeof window.stopBroadcast === 'function') {
+                window.stopBroadcast('demoted');
+            }
+            showToast("A Host is already active in this room. Switched to Viewer mode.", "info", 5000);
+            switchToViewerMode({ alreadyDemotedOnServer: true });
+        });
+
+        // --- 5. ROLE & HOST MODE LOGIC ---
         if (role === 'host') {
             btnLabel.innerText = "PREPARING STUDIO...";
             micBtn.classList.remove('hidden');
-            if(sep) sep.classList.remove('hidden');
+            if (animeBtn) animeBtn.classList.remove('hidden');
+            if (sep) sep.classList.remove('hidden');
             syncBtn.classList.remove('hidden');
+            spatialBtn.classList.remove('hidden');
 
-            spatialBtn.onclick = (e) => {
-                e.stopPropagation();
-                if (window.toggleSpatialAudio) {
-                    const isActive = window.toggleSpatialAudio();
-                    spatialStatus.innerText = `Spatial: ${isActive ? 'ON' : 'OFF'}`;
-                    spatialBtn.classList.toggle('text-emerald-400', isActive);
-                    spatialBtn.classList.toggle('text-slate-400', !isActive);
+            let currentOptMode = 'movie';
+            if (animeBtn) {
+                animeBtn.onclick = async (e) => {
+                    e.stopPropagation();
+                    currentOptMode = currentOptMode === 'anime' ? 'movie' : 'anime';
+                    if (animeIcon) animeIcon.innerText = currentOptMode === 'anime' ? '🌸' : '🎬';
+                    if (animeStatus) animeStatus.innerText = currentOptMode === 'anime' ? 'Anime' : 'Movie';
+                    if (typeof window.setStreamOptimizationMode === 'function') {
+                        await window.setStreamOptimizationMode(currentOptMode);
+                    }
+                    showToast(
+                        currentOptMode === 'anime'
+                            ? '🌸 Anime & Subtitle Mode: Locked 1080p detail & 6 Mbps for crisp linework and subtitles.'
+                            : '🎬 Cinema Movie Mode: Smooth 60fps motion & balanced 4 Mbps encoding.',
+                        'info',
+                        4000
+                    );
+                };
+            }
+
+            // Explicit Host Mode Configuration
+            let activeHostMode = params.get('mode') || caps.recommendedHostMode;
+            if (activeHostMode === 'screen' && !caps.canScreenShare) {
+                activeHostMode = caps.recommendedHostMode;
+            }
+            window.currentHostMode = activeHostMode;
+            let selectedVideoFile = null;
+
+            const hostModeChooser = document.getElementById('hostModeChooser');
+            const modeScreenBtn = document.getElementById('modeScreenBtn');
+            const modeFileBtn = document.getElementById('modeFileBtn');
+            const modeCameraBtn = document.getElementById('modeCameraBtn');
+            const modeViewerBtn = document.getElementById('modeViewerBtn');
+
+            if (hostModeChooser) hostModeChooser.classList.remove('hidden');
+
+            // Style Screen Share button if unsupported on current platform
+            if (!caps.canScreenShare && modeScreenBtn) {
+                modeScreenBtn.classList.add('opacity-40', 'cursor-not-allowed');
+                modeScreenBtn.title = "Screen sharing is not supported by mobile browsers.";
+            }
+
+            const updateHostModeUI = (mode) => {
+                activeHostMode = mode;
+                window.currentHostMode = mode;
+                const activeStyle = ['bg-gradient-to-r', 'from-rose-900', 'to-red-950', 'text-white', 'border', 'border-rose-400/40', 'shadow-md'];
+                const inactiveStyle = ['text-slate-300', 'border-transparent'];
+
+                if (modeScreenBtn && modeCameraBtn) {
+                    [modeScreenBtn, modeFileBtn, modeCameraBtn].filter(Boolean).forEach(b => {
+                        b.classList.remove(...activeStyle);
+                        b.classList.add(...inactiveStyle);
+                    });
+
+                    if (mode === 'screen') {
+                        modeScreenBtn.classList.add(...activeStyle);
+                        modeScreenBtn.classList.remove(...inactiveStyle);
+                        btnLabel.innerText = "START SCREEN SHARE";
+                        btnIcon.innerText = "🖥️";
+                        if (flipCameraBtn) flipCameraBtn.classList.add('hidden');
+                        if (subtitlesBtn) subtitlesBtn.classList.add('hidden');
+                    } else if (mode === 'file' && modeFileBtn) {
+                        modeFileBtn.classList.add(...activeStyle);
+                        modeFileBtn.classList.remove(...inactiveStyle);
+                        btnLabel.innerText = selectedVideoFile ? "START FILE STREAM" : "SELECT VIDEO & STREAM";
+                        btnIcon.innerText = "🎬";
+                        if (flipCameraBtn) flipCameraBtn.classList.add('hidden');
+                        if (subtitlesBtn) subtitlesBtn.classList.remove('hidden');
+                    } else if (mode === 'camera') {
+                        modeCameraBtn.classList.add(...activeStyle);
+                        modeCameraBtn.classList.remove(...inactiveStyle);
+                        btnLabel.innerText = "START CAMERA LIVE";
+                        btnIcon.innerText = "🎥";
+                        if (flipCameraBtn) flipCameraBtn.classList.remove('hidden');
+                        if (subtitlesBtn) subtitlesBtn.classList.add('hidden');
+                    }
                 }
             };
 
+            updateHostModeUI(activeHostMode);
+
+            if (flipCameraBtn) {
+                flipCameraBtn.onclick = async (e) => {
+                    e.stopPropagation();
+                    if (typeof window.flipHostCamera === 'function') {
+                        const newFacing = await window.flipHostCamera();
+                        if (newFacing && flipCameraStatus) {
+                            flipCameraStatus.innerText = newFacing === 'environment' ? 'Rear' : 'Front';
+                        }
+                    }
+                };
+            }
+
+            if (modeScreenBtn) {
+                modeScreenBtn.onclick = () => {
+                    if (caps.canScreenShare) {
+                        updateHostModeUI('screen');
+                    } else {
+                        showToast(getCapabilityDiagnostics('screen_unsupported'), 'warning', 7000);
+                    }
+                };
+            }
+
+            if (modeFileBtn) {
+                modeFileBtn.onclick = () => {
+                    updateHostModeUI('file');
+                };
+            }
+
+            if (modeCameraBtn) {
+                modeCameraBtn.onclick = () => {
+                    updateHostModeUI('camera');
+                };
+            }
+
+            if (modeViewerBtn) {
+                modeViewerBtn.onclick = () => {
+                    switchToViewerMode();
+                };
+            }
+
             let isHostMuted = true;
+            const syncHostMicUI = (isActive) => {
+                isHostMuted = !isActive;
+                micStatus.innerText = isHostMuted ? "Muted" : "Active";
+                if (!isHostMuted) {
+                    micBtn.classList.add("text-red-400", "bg-red-500/20");
+                    micBtn.classList.remove("text-slate-400", "text-rose-300/60");
+                } else {
+                    micBtn.classList.remove("text-red-400", "bg-red-500/20");
+                    micBtn.classList.add("text-slate-400");
+                }
+            };
             micBtn.onclick = async () => {
                 if (window.toggleHostMic) {
-                    // Logic: If muted (true), enable. If active (false), disable.
                     const shouldEnable = isHostMuted; 
                     const success = await window.toggleHostMic(shouldEnable); 
-                    
                     if (success) {
-                        isHostMuted = !isHostMuted;
-                        micStatus.innerText = isHostMuted ? "Muted" : "Active";
-                        
-                        // Visual Feedback for Mic State
-                        if (!isHostMuted) {
-                            // Active State (Red)
-                            micBtn.classList.add("text-red-400", "bg-red-500/20");
-                            micBtn.classList.remove("text-slate-400");
-                        } else {
-                            // Muted State (Default)
-                            micBtn.classList.remove("text-red-400", "bg-red-500/20");
-                            micBtn.classList.add("text-slate-400");
-                        }
+                        syncHostMicUI(shouldEnable);
                     }
                 }
             };
 
             import('./js/broadcaster.js').then(module => {
-                btnLabel.innerText = "START BROADCAST";
-                if(btnIcon) btnIcon.innerText = "🚀";
+                if (role !== 'host') return;
+                updateHostModeUI(activeHostMode);
                 startBtn.onclick = async () => {
                     try {
-                        btnLabel.innerText = "SELECT SCREEN...";
-                        // [CRITICAL] Passing shared socket
-                        await module.init(roomId, video, socket);
+                        let fileToStream = selectedVideoFile || window.__testVideoFile || null;
+                        if (activeHostMode === 'file' && !fileToStream && videoFileInput) {
+                            fileToStream = await new Promise((resolve) => {
+                                const onFocusBack = () => {
+                                    setTimeout(() => {
+                                        if (!videoFileInput.files || !videoFileInput.files[0]) {
+                                            resolve(null);
+                                        }
+                                    }, 400);
+                                };
+                                window.addEventListener('focus', onFocusBack, { once: true });
+                                videoFileInput.onchange = () => {
+                                    window.removeEventListener('focus', onFocusBack);
+                                    resolve((videoFileInput.files && videoFileInput.files[0]) || null);
+                                };
+                                videoFileInput.click();
+                            });
+                            if (!fileToStream) {
+                                updateHostModeUI('file');
+                                return;
+                            }
+                            selectedVideoFile = fileToStream;
+                        }
+
+                        btnLabel.innerText = activeHostMode === 'camera'
+                            ? "ACTIVATING CAMERA..."
+                            : activeHostMode === 'file'
+                                ? "LOADING VIDEO FILE..."
+                                : "SELECT SCREEN...";
+                        
+                        await module.init(roomId, video, socket, {
+                            mode: activeHostMode,
+                            videoFile: fileToStream,
+                            optimizationMode: currentOptMode,
+                            onMicStateChange: syncHostMicUI,
+                            onDemoted: () => {
+                                showToast("A Host is already broadcasting in this room. Switched to Viewer mode.", "info", 5000);
+                                switchToViewerMode({ alreadyDemotedOnServer: true });
+                            },
+                            onWarning: (warningCode) => {
+                                showToast(getCapabilityDiagnostics(warningCode), 'warning', 8000);
+                            },
+                            onEnded: (reason) => {
+                                console.log("[Room] Broadcast ended cleanly:", reason);
+                                selectedVideoFile = null;
+                                if (videoFileInput) videoFileInput.value = '';
+                                if (stopStreamBtn) stopStreamBtn.classList.add('hidden');
+                                curtain.classList.remove('hidden', 'pointer-events-none', 'opacity-0');
+                                updateHostModeUI(activeHostMode);
+                                showToast("Broadcast session ended.", "info", 5000);
+                            }
+                        });
+
+                        if (stopStreamBtn) stopStreamBtn.classList.remove('hidden');
+
                         // Cinematic Reveal: Fade out curtain
                         curtain.classList.add('opacity-0', 'pointer-events-none');
                         setTimeout(() => curtain.classList.add('hidden'), 700);
                     } catch (e) {
-                        btnLabel.innerText = "START BROADCAST";
-                        console.error(e);
-                        alert("Broadcast cancelled. Ensure you select a screen.");
+                        selectedVideoFile = null;
+                        updateHostModeUI(activeHostMode);
+                        if (e && e.reason === 'cancelled') {
+                            console.log("[Room] Screen capture cancelled by user. Ready to retry.");
+                            showToast(getCapabilityDiagnostics('cancelled'), 'info', 4000);
+                        } else {
+                            console.error("[Room] Broadcast start error:", e);
+                            const reason = e?.reason || 'failed';
+                            showToast(getCapabilityDiagnostics(reason, { message: e?.message }), 'error', 8000);
+                        }
                     }
                 };
             });
@@ -536,15 +1080,17 @@
             // Viewer Role
             btnLabel.innerText = "PREPARING THEATER...";
             micBtn.classList.remove('hidden');
-            if(sep) sep.classList.remove('hidden');
+            if (sep) sep.classList.remove('hidden');
+            if (volumeBtn) volumeBtn.classList.remove('hidden');
             qualityBtn.classList.remove('hidden');
             nightBtn.classList.remove('hidden');
             pipBtn.classList.remove('hidden');
             syncBtn.classList.remove('hidden');
+            spatialBtn.classList.remove('hidden');
 
             import('./js/viewer.js').then(module => {
                 btnLabel.innerText = "JOIN MOVIE";
-                if(btnIcon) btnIcon.innerText = "🍿";
+                if (btnIcon) btnIcon.innerText = "🍿";
                 startBtn.onclick = () => {
                     // Cinematic Reveal
                     curtain.classList.add('opacity-0', 'pointer-events-none');

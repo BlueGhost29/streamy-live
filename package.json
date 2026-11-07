@@ -2,7 +2,10 @@
   "name": "streamy",
   "version": "1.0.0",
   "scripts": {
-  "start": "node src/server/server.js"
+    "start": "node src/server/server.js",
+    "dev": "node --watch src/server/server.js",
+    "check": "node -c src/server/server.js && node -c src/server/app.js && node -c src/server/socket.js",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "express": "^5.2.1",
@@ -10,5 +13,9 @@
   },
   "engines": {
     "node": ">=20.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "socket.io-client": "^4.8.4"
   }
 }
