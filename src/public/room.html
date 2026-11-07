@@ -18,7 +18,7 @@
     <meta name="theme-color" content="#000000">
 </head>
 
-<body class="bg-red-950 text-white h-screen w-screen overflow-hidden select-none font-sans">
+<body class="bg-red-950 text-white h-screen h-[100dvh] w-screen overflow-hidden select-none font-sans">
 
     <!-- Toast Notification Container for Diagnostics & Warnings (positioned below top UI bar so EXIT is never covered) -->
     <div id="toastContainer" class="fixed top-20 right-6 z-[120] flex flex-col gap-2.5 max-w-sm pointer-events-none"></div>
@@ -81,7 +81,7 @@
         <!-- AMBILIGHT CANVAS (Behind video) -->
         <canvas id="ambilightCanvas" class="absolute inset-0 w-full h-full object-cover opacity-80 blur-[80px] saturate-200 z-0 transition-opacity duration-500"></canvas>
         
-        <video id="mainVideo" playsinline autoplay class="relative w-full h-full object-contain max-h-screen max-w-screen shadow-2xl z-10"></video>
+        <video id="mainVideo" playsinline webkit-playsinline autoplay class="relative w-full h-full object-contain max-h-screen max-w-screen shadow-2xl z-10"></video>
         
         <!-- LASER CANVAS (In front of video, pointer events active) -->
         <canvas id="laserCanvas" class="absolute inset-0 w-full h-full z-20 touch-none"></canvas>
@@ -657,6 +657,11 @@
         if ('serviceWorker' in navigator && window.isSecureContext) {
             navigator.serviceWorker.register('/sw.js').catch(() => {});
         }
+        window.addEventListener('pageshow', (event) => {
+            if (event.persisted && socket.disconnected) {
+                socket.connect();
+            }
+        });
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'visible') {
                 if (socket.disconnected) {
@@ -969,6 +974,11 @@
                     curtain.classList.add('opacity-0', 'pointer-events-none');
                     setTimeout(() => curtain.classList.add('hidden'), 700);
                     video.muted = false;
+                    // Bless #mainVideo inside direct iOS/iPadOS tap gesture so WebKit permits unmuted WebRTC playout when offer arrives
+                    try {
+                        const p = video.play();
+                        if (p && typeof p.catch === 'function') p.catch(() => {});
+                    } catch (e) {}
                     module.init(roomId, video, socket, username);
                 };
             });
@@ -1253,6 +1263,11 @@
             startBtn.onclick = () => {
                 pendingViewerStart = true;
                 btnLabel.innerText = "JOINING...";
+                video.muted = false;
+                try {
+                    const p = video.play();
+                    if (p && typeof p.catch === 'function') p.catch(() => {});
+                } catch (e) {}
             };
 
             import('./js/viewer.js').then(module => {
@@ -1264,6 +1279,11 @@
                     curtain.classList.add('opacity-0', 'pointer-events-none');
                     setTimeout(() => curtain.classList.add('hidden'), 700);
                     video.muted = false; 
+                    // Bless #mainVideo inside direct iOS/iPadOS tap gesture so WebKit permits unmuted WebRTC playout when offer arrives
+                    try {
+                        const p = video.play();
+                        if (p && typeof p.catch === 'function') p.catch(() => {});
+                    } catch (e) {}
                     // [CRITICAL] Passing shared socket and username
                     module.init(roomId, video, socket, username);
                 };

@@ -93,7 +93,7 @@ export async function captureScreenWithFallback() {
 
     const isUnsupportedError = (err) => {
         if (!err) return false;
-        return err.name === 'NotSupportedError' || err.name === 'InvalidAccessError';
+        return err.name === 'NotSupportedError' || err.name === 'InvalidAccessError' || err.name === 'InvalidStateError' || err.name === 'TypeError';
     };
 
     try {
@@ -334,12 +334,19 @@ export async function captureVideoFileStream(file, videoElement) {
     const fileUrl = URL.createObjectURL(file);
     videoElement.srcObject = null;
     videoElement.src = fileUrl;
+    videoElement.preload = 'metadata';
     videoElement.muted = false;
     videoElement.loop = false;
     videoElement.playsInline = true;
+    videoElement.setAttribute('playsinline', '');
+    videoElement.setAttribute('webkit-playsinline', '');
     videoElement.controls = true;
 
     await new Promise((resolve, reject) => {
+        if (videoElement.readyState >= 1) {
+            resolve();
+            return;
+        }
         const onLoaded = () => {
             cleanupListeners();
             resolve();
@@ -355,6 +362,9 @@ export async function captureVideoFileStream(file, videoElement) {
         };
         videoElement.addEventListener('loadedmetadata', onLoaded, { once: true });
         videoElement.addEventListener('error', onError, { once: true });
+        try {
+            videoElement.load();
+        } catch (e) {}
     });
 
     try {
@@ -368,7 +378,7 @@ export async function captureVideoFileStream(file, videoElement) {
     let fileAudioCtx = null;
 
     // Strategy 1: Native HTMLMediaElement.captureStream (Chromium / Firefox / Android)
-    const captureFn = videoElement.captureStream || videoElement.mozCaptureStream;
+    const captureFn = videoElement.captureStream || videoElement.mozCaptureStream || videoElement.webkitCaptureStream;
     if (typeof captureFn === 'function') {
         try {
             const nativeStream = captureFn.call(videoElement);
@@ -381,14 +391,15 @@ export async function captureVideoFileStream(file, videoElement) {
         }
     }
 
-    // Strategy 2: WebKit / iPadOS / iOS Canvas + Web Audio MediaStreamDestination Bridge
+    // Strategy 2: WebKit / iPadOS / iOS Canvas Bridge (when native video captureStream is absent)
     if (!capturedStream || capturedStream.getVideoTracks().length === 0) {
         const canvas = document.createElement('canvas');
         const vw = videoElement.videoWidth || 1280;
         const vh = videoElement.videoHeight || 720;
         const scale = Math.min(1, 1920 / vw, 1080 / vh);
-        canvas.width = Math.max(2, Math.round(vw * scale));
-        canvas.height = Math.max(2, Math.round(vh * scale));
+        // Enforce strictly even integer dimensions for Apple VideoToolbox H.264 / YUV 4:2:0 encoding
+        canvas.width = Math.max(2, Math.floor((vw * scale) / 2) * 2);
+        canvas.height = Math.max(2, Math.floor((vh * scale) / 2) * 2);
         const ctx = canvas.getContext('2d', { alpha: false });
 
         const drawLoop = () => {
@@ -404,25 +415,32 @@ export async function captureVideoFileStream(file, videoElement) {
         const canvasStream = typeof canvas.captureStream === 'function' ? canvas.captureStream(30) : new MediaStream();
         const combined = new MediaStream();
         canvasStream.getVideoTracks().forEach(t => combined.addTrack(t));
+        capturedStream = combined;
+    }
 
+    // Strategy 2b: Web Audio MediaStreamDestination Bridge (whenever native captureStream lacks audio on iOS/iPadOS WebKit)
+    if (capturedStream && capturedStream.getAudioTracks().length === 0) {
         try {
             const AudioContextClass = window.AudioContext || window.webkitAudioContext;
             if (AudioContextClass) {
                 fileAudioCtx = new AudioContextClass();
-                if (fileAudioCtx.state === 'suspended') {
+                if (fileAudioCtx.state !== 'running') {
                     fileAudioCtx.resume().catch(() => {});
                 }
+                fileAudioCtx.addEventListener('statechange', () => {
+                    if (fileAudioCtx && (fileAudioCtx.state === 'suspended' || fileAudioCtx.state === 'interrupted')) {
+                        fileAudioCtx.resume().catch(() => {});
+                    }
+                });
                 const sourceNode = fileAudioCtx.createMediaElementSource(videoElement);
                 const streamDest = fileAudioCtx.createMediaStreamDestination();
                 sourceNode.connect(fileAudioCtx.destination);
                 sourceNode.connect(streamDest);
-                streamDest.stream.getAudioTracks().forEach(t => combined.addTrack(t));
+                streamDest.stream.getAudioTracks().forEach(t => capturedStream.addTrack(t));
             }
         } catch (audioErr) {
             console.warn("[Capture] Web Audio file extraction fallback warning:", audioErr);
         }
-
-        capturedStream = combined;
     }
 
     capturedStream._isFileStream = true;

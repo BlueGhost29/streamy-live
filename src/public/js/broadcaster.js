@@ -106,6 +106,14 @@ function waitForInitialCandidates(pc, maxWaitMs = 120) {
     });
 }
 
+function isIOSWebKitHost() {
+    if (typeof navigator === 'undefined') return false;
+    const ua = navigator.userAgent || '';
+    if (/iPhone|iPad|iPod|CriOS|FxiOS|EdgiOS/i.test(ua)) return true;
+    if (/Macintosh/i.test(ua) && navigator.maxTouchPoints > 1) return true;
+    return false;
+}
+
 function configureVideoCodecs(peerConnection, preferHardwareFallback = false, codecFallbackStep = 0) {
     if (!peerConnection || typeof RTCRtpSender === 'undefined' || typeof RTCRtpSender.getCapabilities !== 'function') {
         return;
@@ -144,13 +152,19 @@ function configureVideoCodecs(peerConnection, preferHardwareFallback = false, co
         }
 
         const h264Ordered = [...baselineH264Codecs, ...otherH264Codecs];
+        const iosHost = isIOSWebKitHost();
         let orderedCodecs;
         if ((codecFallbackStep % 3) === 1) {
-            // Step 1: Hardware Constrained Baseline H264 first, then VP8, then 8-bit VP9
-            orderedCodecs = [...h264Ordered, ...vp8Codecs, ...vp9Profile0Codecs, ...otherCodecs];
+            // Step 1: Hardware Constrained Baseline H264 first (or VP8 if Host is iOS stepping from H264), then 8-bit VP9
+            orderedCodecs = iosHost
+                ? [...vp8Codecs, ...h264Ordered, ...vp9Profile0Codecs, ...otherCodecs]
+                : [...h264Ordered, ...vp8Codecs, ...vp9Profile0Codecs, ...otherCodecs];
         } else if (!preferHardwareFallback && (codecFallbackStep % 3) === 2) {
             // Step 2: 8-bit VP9 Profile 0 first, then VP8, then Constrained Baseline H264
             orderedCodecs = [...vp9Profile0Codecs, ...vp8Codecs, ...h264Ordered, ...otherCodecs];
+        } else if (iosHost) {
+            // iOS / iPadOS Host (Safari & Chrome CriOS): Prioritize Apple VideoToolbox Constrained Baseline H264 first, then VP8
+            orderedCodecs = [...h264Ordered, ...vp8Codecs, ...vp9Profile0Codecs, ...otherCodecs];
         } else {
             // Default (Step 0) & Hardware Fallback: Universal VP8 first, then Constrained Baseline H264, then 8-bit VP9
             // Prevents Google Pixel Tensor (c2.exynos.vp9.decoder) & mobile hardware VP9 black screens from Frame 1
@@ -217,7 +231,7 @@ function ensureAudioElementPlays(audioEl, duckCtrl) {
                 audioEl.play().catch(() => {});
                 if (duckCtrl && duckCtrl.speakers) {
                     duckCtrl.speakers.forEach(rec => {
-                        if (rec.audioCtx && rec.audioCtx.state === 'suspended') {
+                        if (rec.audioCtx && rec.audioCtx.state !== 'running') {
                             rec.audioCtx.resume().catch(() => {});
                         }
                     });
@@ -428,14 +442,46 @@ export async function init(roomId, videoElement, socket, options = {}) {
                 return false;
             };
 
-            // Live Camera Flip Handler (Front <-> Rear for iPad, Android, and multi-cam desktops)
+            // Live Camera Flip Handler (Front <-> Rear for iPad, iPhone, Android, and multi-cam desktops)
             window.flipHostCamera = async () => {
                 if (currentMode !== 'camera' || !localStream || isFlippingCamera) return null;
                 isFlippingCamera = true;
                 const nextFacing = currentFacingMode === 'user' ? 'environment' : 'user';
                 try {
-                    const newCamStream = await captureCameraStream({ facingMode: nextFacing, audio: false });
-                    const newVideoTrack = newCamStream.getVideoTracks()[0];
+                    let newCamStream = null;
+                    try {
+                        newCamStream = await captureCameraStream({ facingMode: nextFacing, audio: false });
+                    } catch (dualOpenErr) {
+                        // iOS / iPadOS AVFoundation exclusive camera lock: only one sensor can be active at a time.
+                        // Release the current videoTrack first, then request the opposite sensor.
+                        console.warn("[Broadcaster] Exclusive camera lock detected (iOS/iPadOS); releasing current sensor before switching...", dualOpenErr);
+                        if (videoTrack) {
+                            videoTrack.onended = null;
+                            try { videoTrack.stop(); } catch (e) {}
+                            if (localStream && typeof localStream.removeTrack === 'function') {
+                                localStream.removeTrack(videoTrack);
+                            }
+                            videoTrack = null;
+                        }
+                        try {
+                            newCamStream = await captureCameraStream({ facingMode: nextFacing, audio: false });
+                        } catch (reopenErr) {
+                            // Device only has a single camera; restore previous facingMode so broadcast never drops
+                            const restoredStream = await captureCameraStream({ facingMode: currentFacingMode, audio: false }).catch(() => null);
+                            if (restoredStream && restoredStream.getVideoTracks()[0]) {
+                                const restoredTrack = restoredStream.getVideoTracks()[0];
+                                if (localStream && typeof localStream.addTrack === 'function') localStream.addTrack(restoredTrack);
+                                videoTrack = restoredTrack;
+                                bindVideoTrackEnded(videoTrack);
+                                await Promise.all(Object.values(peerConnections).map(async pc => {
+                                    const videoSender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+                                    if (videoSender) await videoSender.replaceTrack(videoTrack);
+                                }));
+                            }
+                            throw reopenErr;
+                        }
+                    }
+                    const newVideoTrack = newCamStream ? newCamStream.getVideoTracks()[0] : null;
                     if (!newVideoTrack) {
                         stopStreamTracks(newCamStream);
                         return null;
@@ -927,6 +973,7 @@ export async function init(roomId, videoElement, socket, options = {}) {
                         viewerVoicePlayer.autoplay = true;
                         viewerVoicePlayer.playsInline = true;
                         viewerVoicePlayer.setAttribute('playsinline', '');
+                        viewerVoicePlayer.setAttribute('webkit-playsinline', '');
                         // Native AEC requirement: MUST append to DOM
                         document.body.appendChild(viewerVoicePlayer);
                     }
@@ -948,7 +995,7 @@ export async function init(roomId, videoElement, socket, options = {}) {
                         }
                         if (duckingController && duckingController.speakers) {
                             const rec = duckingController.speakers.get(id);
-                            if (rec && rec.audioCtx && rec.audioCtx.state === 'suspended') {
+                            if (rec && rec.audioCtx && rec.audioCtx.state !== 'running') {
                                 rec.audioCtx.resume().catch(() => {});
                             }
                         }

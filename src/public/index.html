@@ -103,8 +103,8 @@
             </div>
             <div id="installModalBody" class="space-y-3 text-xs text-rose-100/80 leading-relaxed">
                 <div class="p-3 rounded-xl bg-white/5 border border-white/10">
-                    <p class="font-semibold text-rose-300 mb-1">🍎 iPad &amp; iPhone (Safari)</p>
-                    <p>Tap the <strong>Share</strong> button (<span class="font-mono">⎋</span>) in the Safari toolbar, then tap <strong>"Add to Home Screen"</strong>.</p>
+                    <p class="font-semibold text-rose-300 mb-1">🍎 iPad &amp; iPhone (Safari &amp; Chrome)</p>
+                    <p>Tap the <strong>Share</strong> button (<span class="font-mono">⎋</span>) in the Safari toolbar or Chrome address bar, then tap <strong>"Add to Home Screen"</strong>.</p>
                 </div>
                 <div class="p-3 rounded-xl bg-white/5 border border-white/10">
                     <p class="font-semibold text-rose-300 mb-1">🤖 Android (Chrome)</p>
@@ -238,6 +238,11 @@
         };
 
         const socket = io(); // Connect socket strictly for check-room logic
+        window.addEventListener('pageshow', (event) => {
+            if (event.persisted && socket.disconnected) {
+                socket.connect();
+            }
+        });
 
         // 1. Single Intelligent Entry Logic with Explicit Host Mode
         document.getElementById('openTheaterBtn').addEventListener('click', () => {
@@ -249,13 +254,25 @@
             }
             document.getElementById('roomInput').value = code;
 
-            // Ask Server: Is there an active broadcast in this room?
-            socket.emit("check-room", code, (hasHost) => {
+            let navigated = false;
+            const navigateToRoom = (hasHost) => {
+                if (navigated) return;
+                navigated = true;
                 if (hasHost || selectedHostMode === 'viewer') {
                     window.location.href = `/room.html?room=${code}&role=viewer&name=${encodeURIComponent(name)}`;
                 } else {
                     window.location.href = `/room.html?room=${code}&role=host&mode=${selectedHostMode}&name=${encodeURIComponent(name)}`;
                 }
+            };
+
+            const fallbackTimer = setTimeout(() => navigateToRoom(false), 1500);
+            if (!socket.connected) {
+                socket.connect();
+            }
+            // Ask Server: Is there an active broadcast in this room?
+            socket.emit("check-room", code, (hasHost) => {
+                clearTimeout(fallbackTimer);
+                navigateToRoom(hasHost);
             });
         });
 

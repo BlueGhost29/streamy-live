@@ -45,15 +45,40 @@ export function toggleFullScreen(wrapper = document.documentElement) {
 
     // Attempt Native Standard Fullscreen first
     const target = wrapper || document.documentElement;
+    const verifyOrFallbackToTheater = () => {
+        setTimeout(() => {
+            const activeNative = Boolean(
+                document.fullscreenElement ||
+                document.webkitFullscreenElement ||
+                document.msFullscreenElement
+            );
+            if (!activeNative && !document.body.classList.contains('theater-fullscreen')) {
+                enableTheaterViewportMode();
+            }
+        }, 150);
+    };
+
     if (target.requestFullscreen && typeof target.requestFullscreen === 'function') {
-        target.requestFullscreen().catch(err => {
-            console.warn("[UI] Standard requestFullscreen rejected. Falling back to Theater Viewport mode.", err);
+        try {
+            const res = target.requestFullscreen();
+            if (res && typeof res.catch === 'function') {
+                res.catch(err => {
+                    console.warn("[UI] Standard requestFullscreen rejected. Falling back to Theater Viewport mode.", err);
+                    enableTheaterViewportMode();
+                });
+            }
+            verifyOrFallbackToTheater();
+        } catch (err) {
             enableTheaterViewportMode();
-        });
+        }
         return true;
     } else if (target.webkitRequestFullscreen && typeof target.webkitRequestFullscreen === 'function') {
         try {
-            target.webkitRequestFullscreen();
+            const res = target.webkitRequestFullscreen();
+            if (res && typeof res.catch === 'function') {
+                res.catch(() => enableTheaterViewportMode());
+            }
+            verifyOrFallbackToTheater();
             return true;
         } catch (err) {
             console.warn("[UI] webkitRequestFullscreen failed. Falling back to Theater Viewport mode.", err);
@@ -61,7 +86,7 @@ export function toggleFullScreen(wrapper = document.documentElement) {
             return true;
         }
     } else {
-        // Fallback for iPadOS / iOS Safari: Viewport-Filling Theater Mode
+        // Fallback for iPadOS / iOS Safari & Chrome (CriOS): Viewport-Filling Theater Mode
         enableTheaterViewportMode();
         return true;
     }

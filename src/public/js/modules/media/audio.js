@@ -550,9 +550,14 @@ export class DuckingController {
             }
 
             const audioCtx = new AudioContextClass();
-            if (audioCtx.state === 'suspended') {
+            if (audioCtx.state !== 'running') {
                 audioCtx.resume().catch(() => { });
             }
+            audioCtx.addEventListener('statechange', () => {
+                if (!this.isDestroyed && (audioCtx.state === 'suspended' || audioCtx.state === 'interrupted')) {
+                    audioCtx.resume().catch(() => { });
+                }
+            });
             speakerRecord.audioCtx = audioCtx;
 
             const source = audioCtx.createMediaStreamSource(new MediaStream([voiceTrack]));
@@ -822,7 +827,12 @@ export function setupLocalMicMonitor(micTrack, onSpeakingChange) {
         if (!AudioContextClass) return { destroy };
 
         audioCtx = new AudioContextClass();
-        if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => { });
+        if (audioCtx.state !== 'running') audioCtx.resume().catch(() => { });
+        audioCtx.addEventListener('statechange', () => {
+            if (!isDestroyed && audioCtx && (audioCtx.state === 'suspended' || audioCtx.state === 'interrupted')) {
+                audioCtx.resume().catch(() => { });
+            }
+        });
 
         const source = audioCtx.createMediaStreamSource(new MediaStream([micTrack]));
         const analyser = audioCtx.createAnalyser();
@@ -890,7 +900,12 @@ export function setupDialogueCompressor(videoElement) {
         if (!AudioContextClass) return null;
 
         const audioCtx = new AudioContextClass();
-        if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => { });
+        if (audioCtx.state !== 'running') audioCtx.resume().catch(() => { });
+        audioCtx.addEventListener('statechange', () => {
+            if (audioCtx && (audioCtx.state === 'suspended' || audioCtx.state === 'interrupted')) {
+                audioCtx.resume().catch(() => { });
+            }
+        });
 
         const stream = new MediaStream([audioTrack]);
         const mediaSource = audioCtx.createMediaStreamSource(stream);
@@ -904,9 +919,11 @@ export function setupDialogueCompressor(videoElement) {
 
         const aecDest = audioCtx.createMediaStreamDestination();
         mediaSource.connect(compressor);
+        let makeupGain = null;
         if (typeof audioCtx.createGain === 'function') {
-            const makeupGain = audioCtx.createGain();
-            makeupGain.gain.value = 1.35; // Boost quiet dialogue while loud peaks are compressed
+            makeupGain = audioCtx.createGain();
+            const initVol = videoElement._userExplicitlyMuted ? 0 : (typeof videoElement.volume === 'number' ? videoElement.volume : 1.0);
+            makeupGain.gain.value = 1.35 * initVol; // Boost quiet dialogue & scale software volume for iOS/iPadOS where HTMLMediaElement.volume is read-only
             compressor.connect(makeupGain);
             makeupGain.connect(aecDest);
         } else {
@@ -919,6 +936,10 @@ export function setupDialogueCompressor(videoElement) {
             aecPlayer.id = 'viewerAecPlayer';
             document.body.appendChild(aecPlayer);
         }
+        aecPlayer.autoplay = true;
+        aecPlayer.playsInline = true;
+        aecPlayer.setAttribute('playsinline', '');
+        aecPlayer.setAttribute('webkit-playsinline', '');
         aecPlayer.srcObject = aecDest.stream;
         aecPlayer.volume = videoElement.volume;
         aecPlayer.muted = Boolean(videoElement._userExplicitlyMuted);
@@ -929,13 +950,17 @@ export function setupDialogueCompressor(videoElement) {
             : videoElement.muted;
         videoElement.muted = true;
 
-        // Keep aecPlayer volume & explicit mute state synchronized with videoElement changes (including ducking & volume button)
+        // Keep aecPlayer volume, software makeupGain, & explicit mute state synchronized with videoElement changes (including ducking & volume button on iOS/iPadOS)
         const volumeSync = () => {
             if (aecPlayer) {
                 aecPlayer.volume = videoElement.volume;
                 if (videoElement._userExplicitlyMuted !== undefined) {
                     aecPlayer.muted = Boolean(videoElement._userExplicitlyMuted);
                 }
+            }
+            if (makeupGain && makeupGain.gain) {
+                const effVol = videoElement._userExplicitlyMuted ? 0 : (typeof videoElement.volume === 'number' ? videoElement.volume : 1.0);
+                makeupGain.gain.value = 1.35 * effVol;
             }
         };
         videoElement.addEventListener('volumechange', volumeSync);

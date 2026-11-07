@@ -39,10 +39,20 @@ let viewerHealthInterval = null;
 let viewerReconnectTimer = null;
 let viewerRetryCount = 0;
 
-function isMobileOrTouchViewer() {
+function isIOSOrIPadDevice() {
     if (typeof navigator === 'undefined') return false;
     const ua = navigator.userAgent || '';
-    if (/Android|Pixel|iPhone|iPad|iPod|Mobile/i.test(ua)) return true;
+    if (/iPhone|iPad|iPod|CriOS|FxiOS|EdgiOS/i.test(ua)) return true;
+    // iPadOS 13+ Safari & Chrome report desktop 'Macintosh' UA with multi-touch points
+    if (/Macintosh/i.test(ua) && navigator.maxTouchPoints > 1) return true;
+    return false;
+}
+
+function isMobileOrTouchViewer() {
+    if (typeof navigator === 'undefined') return false;
+    if (isIOSOrIPadDevice()) return true;
+    const ua = navigator.userAgent || '';
+    if (/Android|Pixel|Mobile/i.test(ua)) return true;
     if (typeof window !== 'undefined' && window.innerWidth <= 900 && navigator.maxTouchPoints > 0) return true;
     return false;
 }
@@ -120,8 +130,14 @@ function configureViewerVideoCodecs(videoTransceiver, preferUniversalFallback = 
         }
 
         const h264Ordered = [...baselineH264Codecs, ...otherH264Codecs];
+        const iosViewer = isIOSOrIPadDevice();
         let ordered;
-        if (preferUniversalFallback || (codecStep % 3) === 1) {
+        if (iosViewer) {
+            // iOS & iPadOS (Safari & Chrome CriOS): Prioritize Apple VideoToolbox Constrained Baseline H264 first, then VP8
+            ordered = (codecStep % 3) === 1
+                ? [...vp8Codecs, ...h264Ordered, ...vp9Profile0Codecs, ...otherCodecs]
+                : [...h264Ordered, ...vp8Codecs, ...vp9Profile0Codecs, ...otherCodecs];
+        } else if (preferUniversalFallback || (codecStep % 3) === 1) {
             // Mobile / Pixel / Fallback Step 1: Universal VP8 first, then Constrained Baseline H264, then 8-bit VP9
             ordered = [...vp8Codecs, ...h264Ordered, ...vp9Profile0Codecs, ...otherCodecs];
         } else if ((codecStep % 3) === 2) {
@@ -168,7 +184,7 @@ function ensureViewerAudioPlays(audioEl, duckCtrl) {
                 audioEl.play().catch(() => {});
                 if (duckCtrl && duckCtrl.speakers) {
                     duckCtrl.speakers.forEach(rec => {
-                        if (rec.audioCtx && rec.audioCtx.state === 'suspended') {
+                        if (rec.audioCtx && rec.audioCtx.state !== 'running') {
                             rec.audioCtx.resume().catch(() => {});
                         }
                     });
@@ -232,8 +248,10 @@ export async function init(roomId, videoElement, socket, username) {
     // Keep device screen active during movie playback (non-blocking so UI controls bind synchronously)
     requestWakeLock();
     
-    // Critical iOS / Safari video player configuration
+    // Critical iOS / iPadOS (Safari & Chrome CriOS) video player configuration
     videoElement.playsInline = true;
+    videoElement.setAttribute('playsinline', '');
+    videoElement.setAttribute('webkit-playsinline', '');
     videoElement.autoplay = true; 
     videoElement.controls = false;
     
@@ -352,6 +370,12 @@ export async function init(roomId, videoElement, socket, username) {
             dialogueCompressorHandle.destroy();
             dialogueCompressorHandle = null;
         }
+        const prePrimedAec = document.getElementById('viewerAecPlayer');
+        if (prePrimedAec && prePrimedAec.parentNode) {
+            prePrimedAec.pause();
+            prePrimedAec.srcObject = null;
+            prePrimedAec.parentNode.removeChild(prePrimedAec);
+        }
     };
 
     // Sync initial Cozy state if user toggled Cozy before clicking Join Movie
@@ -371,6 +395,22 @@ export async function init(roomId, videoElement, socket, username) {
                 window.nightModeActive = true;
                 updateNightModeButtonUI(true);
                 const boundNow = syncNightModeAudio();
+                if (!boundNow && isIOSOrIPadDevice()) {
+                    // Bless #viewerAecPlayer inside the direct iOS/iPadOS tap gesture so WebKit permits unmuted playback when audio track arrives
+                    let aecPlayer = document.getElementById('viewerAecPlayer');
+                    if (!aecPlayer) {
+                        aecPlayer = new Audio();
+                        aecPlayer.id = 'viewerAecPlayer';
+                        aecPlayer.playsInline = true;
+                        aecPlayer.setAttribute('playsinline', '');
+                        aecPlayer.setAttribute('webkit-playsinline', '');
+                        document.body.appendChild(aecPlayer);
+                    }
+                    try {
+                        const p = aecPlayer.play();
+                        if (p && typeof p.catch === 'function') p.catch(() => {});
+                    } catch (err) {}
+                }
                 displayNotification(
                     boundNow
                         ? "🌙 Cozy Mode ON: Boosting quiet dialogue & softening loud scenes."
@@ -879,6 +919,7 @@ export async function init(roomId, videoElement, socket, username) {
                     voicePlayer.autoplay = true;
                     voicePlayer.playsInline = true;
                     voicePlayer.setAttribute('playsinline', '');
+                    voicePlayer.setAttribute('webkit-playsinline', '');
                     // Native AEC requirement: MUST append to DOM for Chromium / WebKit AEC routing
                     document.body.appendChild(voicePlayer);
                 }
@@ -898,7 +939,7 @@ export async function init(roomId, videoElement, socket, username) {
                     }
                     if (duckingController && duckingController.speakers) {
                         const rec = duckingController.speakers.get('host');
-                        if (rec && rec.audioCtx && rec.audioCtx.state === 'suspended') {
+                        if (rec && rec.audioCtx && rec.audioCtx.state !== 'running') {
                             rec.audioCtx.resume().catch(() => {});
                         }
                     }
@@ -1160,9 +1201,40 @@ export async function init(roomId, videoElement, socket, username) {
         }
     });
     
+    // iOS / iPadOS (Safari & Chrome CriOS) Foreground Wake Recovery:
+    // Resumes WebKit 'interrupted'/'suspended' AudioContexts, re-acquires screen wake lock, and recovers frozen UDP sessions
+    if (window._viewerVisibilityHandler) {
+        document.removeEventListener('visibilitychange', window._viewerVisibilityHandler);
+    }
+    window._viewerVisibilityHandler = () => {
+        if (document.visibilityState !== 'visible') return;
+        requestWakeLock();
+        if (dialogueCompressorHandle && dialogueCompressorHandle.audioCtx && dialogueCompressorHandle.audioCtx.state !== 'running') {
+            dialogueCompressorHandle.audioCtx.resume().catch(() => {});
+        }
+        if (duckingController && duckingController.speakers) {
+            duckingController.speakers.forEach(rec => {
+                if (rec.audioCtx && rec.audioCtx.state !== 'running') {
+                    rec.audioCtx.resume().catch(() => {});
+                }
+            });
+        }
+        const iceState = peerConnection ? peerConnection.iceConnectionState : 'none';
+        if ((iceState === 'failed' || iceState === 'disconnected' || iceState === 'closed') && socket && socket.connected) {
+            forceFreshPeerConnection = true;
+            socket.emit("watcher", username);
+            scheduleViewerHandshakeWatchdog();
+        }
+    };
+    document.addEventListener('visibilitychange', window._viewerVisibilityHandler);
+
     // Clean Viewer Session Teardown
     const cleanupViewerResources = () => {
         clearViewerWatchdogs();
+        if (window._viewerVisibilityHandler) {
+            document.removeEventListener('visibilitychange', window._viewerVisibilityHandler);
+            window._viewerVisibilityHandler = null;
+        }
         if (duckingController) {
             duckingController.destroy();
             duckingController = null;
